@@ -305,6 +305,11 @@ namespace StockSharp.Algo.Storages.Binary
 				return;
 
 			CouponInfo.Write(stream);
+
+			if (Version < MarketDataVersions.Version63)
+				return;
+
+			WriteSeqNums(stream);
 		}
 
 		public override void Read(Stream stream)
@@ -432,6 +437,11 @@ namespace StockSharp.Algo.Storages.Binary
 				return;
 
 			CouponInfo.Read(stream);
+
+			if (Version < MarketDataVersions.Version63)
+				return;
+
+			ReadSeqNums(stream);
 		}
 
 		private static void Write(Stream stream, RefPair<decimal, decimal> info)
@@ -521,10 +531,12 @@ namespace StockSharp.Algo.Storages.Binary
 			{ Level1Fields.HighPrice,				1 << 1 },
 			{ Level1Fields.LowPrice,				1 << 2 },
 			{ Level1Fields.ClosePrice,				1 << 3 },
+#pragma warning disable CS0612 // Type or member is obsolete
 			{ Level1Fields.LastTrade,				1 << 4 },
-			{ Level1Fields.StepPrice,				1 << 5 },
 			{ Level1Fields.BestBid,					1 << 6 },
 			{ Level1Fields.BestAsk,					1 << 7 },
+#pragma warning restore CS0612 // Type or member is obsolete
+			{ Level1Fields.StepPrice,				1 << 5 },
 			{ Level1Fields.ImpliedVolatility,		1 << 8 },
 			{ Level1Fields.TheorPrice,				1 << 9 },
 			{ Level1Fields.OpenInterest,			1 << 10 },
@@ -546,7 +558,7 @@ namespace StockSharp.Algo.Storages.Binary
 		};
 
 		public Level1BinarySerializer(SecurityId securityId, IExchangeInfoProvider exchangeInfoProvider)
-			: base(securityId, null, 50, MarketDataVersions.Version61, exchangeInfoProvider)
+			: base(securityId, null, 50, MarketDataVersions.Version64, exchangeInfoProvider)
 		{
 		}
 
@@ -580,10 +592,11 @@ namespace StockSharp.Algo.Storages.Binary
 		{
 			if (metaInfo.IsEmpty())
 			{
-				var msg = messages.First();
+				var first = messages.First();
 
-				metaInfo.ServerOffset = msg.ServerTime.Offset;
-				metaInfo.MaxKnownType = Level1Fields.YieldVWAPPrev;
+				metaInfo.ServerOffset = first.ServerTime.Offset;
+				metaInfo.MaxKnownType = Level1Fields.LastTradeStringId;
+				metaInfo.FirstSeqNum = metaInfo.PrevSeqNum = first.SeqNum;
 			}
 
 			writer.WriteInt(messages.Count());
@@ -597,6 +610,9 @@ namespace StockSharp.Algo.Storages.Binary
 			var minMaxPrice = metaInfo.Version >= MarketDataVersions.Version60;
 			var useLong = metaInfo.Version >= MarketDataVersions.Version60;
 			var storeSteps = metaInfo.Version >= MarketDataVersions.Version60;
+			var buildFrom = metaInfo.Version >= MarketDataVersions.Version62;
+			var seqNum = metaInfo.Version >= MarketDataVersions.Version63;
+			var largeDecimal = metaInfo.Version >= MarketDataVersions.Version64;
 
 			foreach (var message in messages)
 			{
@@ -623,6 +639,12 @@ namespace StockSharp.Algo.Storages.Binary
 						throw new ArgumentException(LocalizedStrings.Str920, nameof(messages));
 
 					writer.WriteInt(count);
+
+					if (buildFrom)
+						writer.WriteBuildFrom(message.BuildFrom);
+
+					if (seqNum)
+						writer.WriteSeqNum(message, metaInfo);
 				}
 
 				foreach (var change in message.Changes)
@@ -662,6 +684,10 @@ namespace StockSharp.Algo.Storages.Binary
 								case DateTimeOffset d:
 									writer.WriteInt(3);
 									writer.WriteLong(d.To<long>());
+									break;
+								case string s:
+									writer.WriteInt(4);
+									writer.WriteString(s);
 									break;
 								default:
 									writer.WriteInt(10);
@@ -706,7 +732,7 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.AsksVolume:
 						case Level1Fields.OpenInterest:
 						{
-							writer.WriteVolume((decimal)value, metaInfo, SecurityId);
+							writer.WriteVolume((decimal)value, metaInfo, largeDecimal);
 							break;
 						}
 						case Level1Fields.ImpliedVolatility:
@@ -768,7 +794,7 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.VolumeStep:
 						{
 							if (storeSteps)
-								writer.WriteVolume((decimal)value, metaInfo, SecurityId);
+								writer.WriteVolume((decimal)value, metaInfo, largeDecimal);
 							else
 							{
 								//нет необходимости хранить шаги цены и объема, т.к. они есть в metaInfo
@@ -783,7 +809,7 @@ namespace StockSharp.Algo.Storages.Binary
 						}
 						case Level1Fields.Multiplier:
 						{
-							writer.WriteVolume((decimal)value, metaInfo, SecurityId);
+							writer.WriteVolume((decimal)value, metaInfo, largeDecimal);
 							break;
 						}
 						case Level1Fields.StepPrice:
@@ -791,12 +817,13 @@ namespace StockSharp.Algo.Storages.Binary
 							SerializeChange(writer, metaInfo.StepPrice, (decimal)value);
 							break;
 						}
+#pragma warning disable CS0612 // Type or member is obsolete
 						case Level1Fields.LastTrade:
 						{
 							var trade = (Trade)value;
 
 							SerializePrice(writer, metaInfo, trade.Price, useLong, nonAdjustPrice);
-							writer.WriteVolume(trade.Volume, metaInfo, SecurityId);
+							writer.WriteVolume(trade.Volume, metaInfo, largeDecimal);
 							writer.WriteSide(trade.OrderDirection);
 
 							break;
@@ -804,13 +831,14 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.BestBid:
 						case Level1Fields.BestAsk:
 						{
-							var quote = (Quote)value;
+							var quote = (QuoteChange)value;
 
 							SerializePrice(writer, metaInfo, quote.Price, useLong, nonAdjustPrice);
-							writer.WriteVolume(quote.Volume, metaInfo, SecurityId);
+							writer.WriteVolume(quote.Volume, metaInfo, largeDecimal);
 
 							break;
 						}
+#pragma warning restore CS0612 // Type or member is obsolete
 						case Level1Fields.State:
 						{
 							writer.WriteInt((int)(SecurityStates)value);
@@ -825,6 +853,11 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.SpreadMiddle:
 						case Level1Fields.LowBidPrice:
 						case Level1Fields.HighAskPrice:
+						case Level1Fields.UnderlyingBestBidPrice:
+						case Level1Fields.UnderlyingBestAskPrice:
+						case Level1Fields.MedianPrice:
+						case Level1Fields.HighPrice52Week:
+						case Level1Fields.LowPrice52Week:
 						{
 							SerializePrice(writer, metaInfo, (decimal)value, useLong, nonAdjustPrice);
 							break;
@@ -846,8 +879,10 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.MaxVolume:
 						case Level1Fields.LastTradeVolumeLow:
 						case Level1Fields.LastTradeVolumeHigh:
+						case Level1Fields.LowBidVolume:
+						case Level1Fields.HighAskVolume:
 						{
-							writer.WriteVolume((decimal)value, metaInfo, SecurityId);
+							writer.WriteVolume((decimal)value, metaInfo, largeDecimal);
 							break;
 						}
 						case Level1Fields.Change:
@@ -912,6 +947,11 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.LastTradeId:
 						{
 							writer.WriteLong((long)value);
+							break;
+						}
+						case Level1Fields.LastTradeStringId:
+						{
+							writer.WriteString((string)value);
 							break;
 						}
 						case Level1Fields.LastTradeUpDown:
@@ -1110,6 +1150,11 @@ namespace StockSharp.Algo.Storages.Binary
 						case Level1Fields.VWAPPrev:
 						case Level1Fields.YieldVWAP:
 						case Level1Fields.YieldVWAPPrev:
+						case Level1Fields.Index:
+						case Level1Fields.Imbalance:
+						case Level1Fields.UnderlyingPrice:
+						case Level1Fields.OptionMargin:
+						case Level1Fields.OptionSyntheticMargin:
 						{
 							writer.WriteDecimal((decimal)value, 0);
 							break;
@@ -1152,6 +1197,9 @@ namespace StockSharp.Algo.Storages.Binary
 			var minMaxPrice = metaInfo.Version >= MarketDataVersions.Version60;
 			var useLong = metaInfo.Version >= MarketDataVersions.Version60;
 			var storeSteps = metaInfo.Version >= MarketDataVersions.Version60;
+			var buildFrom = metaInfo.Version >= MarketDataVersions.Version62;
+			var seqNum = metaInfo.Version >= MarketDataVersions.Version63;
+			var largeDecimal = metaInfo.Version >= MarketDataVersions.Version64;
 
 			var l1Msg = new Level1ChangeMessage { SecurityId = SecurityId };
 
@@ -1177,6 +1225,12 @@ namespace StockSharp.Algo.Storages.Binary
 				//	l1Msg.LocalTime = l1Msg.ServerTime;
 
 				changeCount = reader.ReadInt();
+
+				if (buildFrom)
+					l1Msg.BuildFrom = reader.ReadBuildFrom();
+
+				if (seqNum)
+					reader.ReadSeqNum(l1Msg, metaInfo);
 			}
 			else
 			{
@@ -1211,6 +1265,10 @@ namespace StockSharp.Algo.Storages.Binary
 
 							case 3:
 								l1Msg.Add(field, reader.ReadLong().To<DateTimeOffset>());
+								break;
+
+							case 4:
+								l1Msg.Add(field, reader.ReadString());
 								break;
 
 							case 10:
@@ -1260,7 +1318,7 @@ namespace StockSharp.Algo.Storages.Binary
 					case Level1Fields.AsksVolume:
 					case Level1Fields.OpenInterest:
 					{
-						l1Msg.Add(field, reader.ReadVolume(metaInfo));
+						l1Msg.Add(field, reader.ReadVolume(metaInfo, largeDecimal));
 						break;
 					}
 					case Level1Fields.ImpliedVolatility:
@@ -1327,12 +1385,12 @@ namespace StockSharp.Algo.Storages.Binary
 					}
 					case Level1Fields.VolumeStep:
 					{
-						l1Msg.Add(field, storeSteps ? reader.ReadVolume(metaInfo) : metaInfo.VolumeStep);
+						l1Msg.Add(field, storeSteps ? reader.ReadVolume(metaInfo, largeDecimal) : metaInfo.VolumeStep);
 						break;
 					}
 					case Level1Fields.Multiplier:
 					{
-						l1Msg.Add(field, reader.ReadVolume(metaInfo));
+						l1Msg.Add(field, reader.ReadVolume(metaInfo, largeDecimal));
 						break;
 					}
 					case Level1Fields.StepPrice:
@@ -1340,13 +1398,15 @@ namespace StockSharp.Algo.Storages.Binary
 						l1Msg.Add(field, DeserializeChange(reader, metaInfo.StepPrice));
 						break;
 					}
+#pragma warning disable CS0612 // Type or member is obsolete
 					case Level1Fields.LastTrade:
 					{
 						var price = DeserializePrice(reader, metaInfo, useLong, nonAdjustPrice);
 
-						l1Msg.Add(Level1Fields.LastTradePrice, price);
-						l1Msg.Add(Level1Fields.LastTradeVolume, reader.ReadVolume(metaInfo));
-						l1Msg.Add(Level1Fields.LastTradeTime, metaInfo.FirstTime.ApplyTimeZone(metaInfo.ServerOffset));
+						l1Msg
+							.Add(Level1Fields.LastTradePrice, price)
+							.Add(Level1Fields.LastTradeVolume, reader.ReadVolume(metaInfo, largeDecimal))
+							.Add(Level1Fields.LastTradeTime, metaInfo.FirstTime.ApplyTimeZone(metaInfo.ServerOffset));
 
 						var origin = reader.ReadSide();
 
@@ -1359,18 +1419,23 @@ namespace StockSharp.Algo.Storages.Binary
 					{
 						var price = DeserializePrice(reader, metaInfo, useLong, nonAdjustPrice);
 
-						l1Msg.Add(Level1Fields.BestBidPrice, price);
-						l1Msg.Add(Level1Fields.BestBidVolume, reader.ReadVolume(metaInfo));
+						l1Msg
+							.Add(Level1Fields.BestBidPrice, price)
+							.Add(Level1Fields.BestBidVolume, reader.ReadVolume(metaInfo, largeDecimal));
+
 						break;
 					}
 					case Level1Fields.BestAsk:
 					{
 						var price = DeserializePrice(reader, metaInfo, useLong, nonAdjustPrice);
 
-						l1Msg.Add(Level1Fields.BestAskPrice, price);
-						l1Msg.Add(Level1Fields.BestAskVolume, reader.ReadVolume(metaInfo));
+						l1Msg
+							.Add(Level1Fields.BestAskPrice, price)
+							.Add(Level1Fields.BestAskVolume, reader.ReadVolume(metaInfo, largeDecimal));
+
 						break;
 					}
+#pragma warning restore CS0612 // Type or member is obsolete
 					case Level1Fields.State:
 					{
 						l1Msg.Add(field, (SecurityStates)reader.ReadInt());
@@ -1385,6 +1450,11 @@ namespace StockSharp.Algo.Storages.Binary
 					case Level1Fields.SpreadMiddle:
 					case Level1Fields.LowBidPrice:
 					case Level1Fields.HighAskPrice:
+					case Level1Fields.UnderlyingBestBidPrice:
+					case Level1Fields.UnderlyingBestAskPrice:
+					case Level1Fields.MedianPrice:
+					case Level1Fields.HighPrice52Week:
+					case Level1Fields.LowPrice52Week:
 					{
 						var price = DeserializePrice(reader, metaInfo, useLong, nonAdjustPrice);
 						l1Msg.Add(field, price);
@@ -1410,8 +1480,10 @@ namespace StockSharp.Algo.Storages.Binary
 					case Level1Fields.MaxVolume:
 					case Level1Fields.LastTradeVolumeLow:
 					case Level1Fields.LastTradeVolumeHigh:
+					case Level1Fields.LowBidVolume:
+					case Level1Fields.HighAskVolume:
 					{
-						l1Msg.Add(field, reader.ReadVolume(metaInfo));
+						l1Msg.Add(field, reader.ReadVolume(metaInfo, largeDecimal));
 						break;
 					}
 					case Level1Fields.Change:
@@ -1453,7 +1525,7 @@ namespace StockSharp.Algo.Storages.Binary
 					case Level1Fields.BidsCount:
 					case Level1Fields.AsksCount:
 					{
-						l1Msg.Add(field, metaInfo.Version < MarketDataVersions.Version46 ? (int)reader.ReadVolume(metaInfo) : reader.ReadInt());
+						l1Msg.Add(field, metaInfo.Version < MarketDataVersions.Version46 ? (int)reader.ReadVolume(metaInfo, false) : reader.ReadInt());
 						break;
 					}
 					case Level1Fields.TradesCount:
@@ -1464,6 +1536,11 @@ namespace StockSharp.Algo.Storages.Binary
 					case Level1Fields.LastTradeId:
 					{
 						l1Msg.Add(field, reader.ReadLong());
+						break;
+					}
+					case Level1Fields.LastTradeStringId:
+					{
+						l1Msg.Add(field, reader.ReadString());
 						break;
 					}
 					case Level1Fields.LastTradeUpDown:
@@ -1654,6 +1731,11 @@ namespace StockSharp.Algo.Storages.Binary
 					case Level1Fields.VWAPPrev:
 					case Level1Fields.YieldVWAP:
 					case Level1Fields.YieldVWAPPrev:
+					case Level1Fields.Index:
+					case Level1Fields.Imbalance:
+					case Level1Fields.UnderlyingPrice:
+					case Level1Fields.OptionMargin:
+					case Level1Fields.OptionSyntheticMargin:
 					{
 						l1Msg.Add(field, reader.ReadDecimal(0));
 						break;

@@ -34,7 +34,9 @@ namespace StockSharp.Algo.Storages
 
 		protected MarketDataStorage(SecurityId securityId, object arg, Func<TMessage, DateTimeOffset> getTime, Func<TMessage, SecurityId> getSecurityId, Func<TMessage, TId> getId, IMarketDataSerializer<TMessage> serializer, IMarketDataStorageDrive drive, Func<TMessage, bool> isValid)
 		{
-			if (securityId.IsDefault())
+			_dataType = DataType.Create(typeof(TMessage), arg);
+
+			if (_dataType.IsSecurityRequired && securityId == default)
 				throw new ArgumentException(LocalizedStrings.Str1025, nameof(securityId));
 
 			SecurityId = securityId;
@@ -46,18 +48,15 @@ namespace StockSharp.Algo.Storages
 			_getId = getId ?? throw new ArgumentNullException(nameof(getId));
 			Drive = drive ?? throw new ArgumentNullException(nameof(drive));
 			Serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
-			_arg = arg;
 			_isValid = isValid ?? throw new ArgumentNullException(nameof(isValid));
 		}
 
 		IEnumerable<DateTime> IMarketDataStorage.Dates => Drive.Dates;
 
-		Type IMarketDataStorage.DataType => typeof(TMessage);
+		private readonly DataType _dataType;
+		DataType IMarketDataStorage.DataType => _dataType;
 
 		public SecurityId SecurityId { get; }
-
-		private readonly object _arg;
-		object IMarketDataStorage.Arg => _arg;
 
 		public bool AppendOnlyNew { get; set; }
 
@@ -177,6 +176,40 @@ namespace StockSharp.Algo.Storages
 
 					if (data.IsEmpty())
 						return 0;
+				}
+			}
+
+			if (!isOverride && _dataType == DataType.MarketDepth)
+			{
+				var isEmpty = metaInfo.Count == 0;
+				var isIncremental = default(bool?);
+
+				for (int i = 0; i < data.Length; i++)
+				{
+					if (data[i] is QuoteChangeMessage quoteMsg)
+					{
+						if (isEmpty)
+						{
+							if (isIncremental == null)
+								isIncremental = quoteMsg.State != null;
+							else
+							{
+								if (isIncremental.Value)
+								{
+									if (quoteMsg.State == null)
+										throw new InvalidOperationException(LocalizedStrings.StorageRequiredIncremental.Put(true));
+								}
+								else
+								{
+									if (quoteMsg.State != null)
+										throw new InvalidOperationException(LocalizedStrings.StorageRequiredIncremental.Put(false));
+								}
+							}
+						}
+
+						if (!quoteMsg.IsSorted)
+							data[i] = quoteMsg.TypedClone().TrySort().To<TMessage>();
+					}
 				}
 			}
 

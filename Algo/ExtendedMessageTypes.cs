@@ -10,10 +10,10 @@
 	/// </summary>
 	public static class ExtendedMessageTypes
 	{
-		/// <summary>
-		/// The last message identifier.
-		/// </summary>
-		public const MessageTypes Last = (MessageTypes)(-1);
+		///// <summary>
+		///// The last message identifier.
+		///// </summary>
+		//public const MessageTypes Last = (MessageTypes)(-1);
 
 		///// <summary>
 		///// <see cref="ClearingMessage"/>.
@@ -41,7 +41,7 @@
 		public const MessageTypes HistorySource = (MessageTypes)(-8);
 		
 		internal const MessageTypes RemoveSecurity = (MessageTypes)(-9);
-		internal const MessageTypes ProcessSuspendedSecurityMessages = (MessageTypes)(-10);
+		//internal const MessageTypes ProcessSuspended = (MessageTypes)(-10);
 		internal const MessageTypes StrategyChangeState = (MessageTypes)(-11);
 		internal const MessageTypes Reconnect = (MessageTypes)(-12);
 		internal const MessageTypes ReconnectingFinished = (MessageTypes)(-13);

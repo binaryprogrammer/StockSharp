@@ -16,8 +16,8 @@ Copyright 2010 by StockSharp, LLC
 namespace StockSharp.Messages
 {
 	using System;
-	using System.ComponentModel;
 	using System.Linq;
+	using System.ComponentModel;
 	using System.Runtime.Serialization;
 
 	using Ecng.Common;
@@ -59,9 +59,10 @@ namespace StockSharp.Messages
 	/// <summary>
 	/// Messages containing quotes.
 	/// </summary>
-	[System.Runtime.Serialization.DataContract]
+	[DataContract]
 	[Serializable]
-	public sealed class QuoteChangeMessage : BaseSubscriptionIdMessage<QuoteChangeMessage>, IServerTimeMessage, ISecurityIdMessage
+	public sealed class QuoteChangeMessage : BaseSubscriptionIdMessage<QuoteChangeMessage>,
+		IServerTimeMessage, ISecurityIdMessage, IGeneratedMessage, ISeqNumMessage
 	{
 		/// <inheritdoc />
 		[DataMember]
@@ -108,19 +109,17 @@ namespace StockSharp.Messages
 		public DateTimeOffset ServerTime { get; set; }
 
 		/// <summary>
-		/// Flag sorted by price quotes (<see cref="QuoteChangeMessage.Bids"/> by descending, <see cref="QuoteChangeMessage.Asks"/> by ascending).
+		/// Flag sorted by price quotes (<see cref="Bids"/> by descending, <see cref="Asks"/> by ascending).
 		/// </summary>
 		[DataMember]
 		[DisplayNameLoc(LocalizedStrings.Str285Key)]
 		[DescriptionLoc(LocalizedStrings.Str285Key, true)]
 		[MainCategory]
-		public bool IsSorted { get; set; }
+		public bool IsSorted { get; set; } = true;
 
-		/// <summary>
-		/// The quote change was built by level1.
-		/// </summary>
-		[Browsable(false)]
-		public bool IsByLevel1 { get; set; }
+		/// <inheritdoc />
+		[DataMember]
+		public DataType BuildFrom { get; set; }
 
 		/// <summary>
 		/// The quote change contains filtered quotes.
@@ -151,6 +150,10 @@ namespace StockSharp.Messages
 		public bool HasPositions { get; set; }
 
 		/// <inheritdoc />
+		[DataMember]
+		public long SeqNum { get; set; }
+
+		/// <inheritdoc />
 		public override DataType DataType => DataType.MarketDepth;
 
 		/// <summary>
@@ -167,21 +170,30 @@ namespace StockSharp.Messages
 			base.CopyTo(destination);
 
 			destination.SecurityId = SecurityId;
-			destination.Bids = Bids.Select(q => q.Clone()).ToArray();
-			destination.Asks = Asks.Select(q => q.Clone()).ToArray();
+			destination.Bids = Bids.ToArray();
+			destination.Asks = Asks.ToArray();
 			destination.ServerTime = ServerTime;
 			destination.IsSorted = IsSorted;
 			destination.Currency = Currency;
-			destination.IsByLevel1 = IsByLevel1;
+			destination.BuildFrom = BuildFrom;
 			destination.IsFiltered = IsFiltered;
 			destination.State = State;
 			destination.HasPositions = HasPositions;
+			destination.SeqNum = SeqNum;
 		}
 
 		/// <inheritdoc />
 		public override string ToString()
 		{
-			return base.ToString() + $",T(S)={ServerTime:yyyy/MM/dd HH:mm:ss.fff},B={Bids.Length},A={Asks.Length}";
+			var str = base.ToString() + $",Sec={SecurityId},T(S)={ServerTime:yyyy/MM/dd HH:mm:ss.fff},B={Bids.Length},A={Asks.Length}";
+
+			if (State != default)
+				str += $",State={State.Value}";
+
+			if (SeqNum != default)
+				str += $",SQ={SeqNum}";
+
+			return str;
 		}
 	}
 }

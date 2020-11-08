@@ -57,26 +57,25 @@
 		/// <param name="fileName">File name.</param>
 		/// <param name="updateProgress">Progress notification.</param>
 		/// <param name="isCancelled">The processor, returning process interruption sign.</param>
-		public void Import(string fileName, Action<int> updateProgress, Func<bool> isCancelled)
+		/// <returns>Count and last time.</returns>
+		public (int, DateTimeOffset?) Import(string fileName, Action<int> updateProgress, Func<bool> isCancelled)
 		{
+			var count = 0;
+			var lastTime = default(DateTimeOffset?);
+
 			var buffer = new List<Message>();
 
+			void Flush()
+			{
+				count += buffer.Count;
+
+				if (buffer.LastOrDefault() is IServerTimeMessage timeMsg)
+					lastTime = timeMsg.ServerTime;
+
+				FlushBuffer(buffer);
+			}
+
 			this.AddInfoLog(LocalizedStrings.Str2870Params.Put(fileName, DataType.MessageType.Name));
-
-			Func<Message, SecurityId> getSecurityId = null;
-
-			if (DataType == DataType.Securities)
-				getSecurityId = m => ((SecurityMessage)m).SecurityId;
-			else if (DataType == DataType.MarketDepth)
-				getSecurityId = m => ((QuoteChangeMessage)m).SecurityId;
-			else if (DataType == DataType.Level1)
-				getSecurityId = m => ((Level1ChangeMessage)m).SecurityId;
-			else if (DataType == DataType.PositionChanges)
-				getSecurityId = m => ((PositionChangeMessage)m).SecurityId;
-			else if (DataType == DataType.Ticks || DataType == DataType.OrderLog || DataType == DataType.Transactions)
-				getSecurityId = m => ((ExecutionMessage)m).SecurityId;
-			else if (DataType.IsCandles)
-				getSecurityId = m => ((CandleMessage)m).SecurityId;
 
 			try
 			{
@@ -94,7 +93,7 @@
 						buffer.Add(msg);
 
 						if (buffer.Count > 1000)
-							FlushBuffer(buffer, getSecurityId);
+							Flush();
 					}
 					else
 					{
@@ -139,7 +138,9 @@
 			}
 
 			if (buffer.Count > 0)
-				FlushBuffer(buffer, getSecurityId);
+				Flush();
+
+			return (count, lastTime);
 		}
 
 		private SecurityId TryInitSecurity(SecurityId securityId)
@@ -162,7 +163,7 @@
 			return securityId;
 		}
 
-		private void FlushBuffer(List<Message> buffer, Func<Message, SecurityId> getSecurityId)
+		private void FlushBuffer(List<Message> buffer)
 		{
 			var registry = ServicesRegistry.StorageRegistry;
 
@@ -172,14 +173,11 @@
 			}
 			else
 			{
-				if (getSecurityId == null)
-					throw new ArgumentNullException(nameof(getSecurityId));
-
 				foreach (var typeGroup in buffer.GroupBy(i => i.GetType()))
 				{
 					var dataType = typeGroup.Key;
 
-					foreach (var secGroup in typeGroup.GroupBy(getSecurityId))
+					foreach (var secGroup in typeGroup.GroupBy(g => ((ISecurityIdMessage)g).SecurityId))
 					{
 						var secId = TryInitSecurity(secGroup.Key);
 

@@ -18,9 +18,9 @@ namespace StockSharp.Messages
 	using System;
 	using System.Collections.Generic;
 	using System.ComponentModel.DataAnnotations;
+	using System.Linq;
 	using System.Runtime.Serialization;
 	using System.Xml.Serialization;
-
 	using Ecng.Common;
 	using Ecng.Serialization;
 
@@ -81,15 +81,8 @@ namespace StockSharp.Messages
 	[Serializable]
 	[DisplayNameLoc(LocalizedStrings.Str273Key)]
 	[DescriptionLoc(LocalizedStrings.Str274Key)]
-	public class QuoteChange : Cloneable<QuoteChange>, IExtendableEntity
+	public struct QuoteChange : IExtendableEntity
 	{
-		/// <summary>
-		/// Initializes a new instance of the <see cref="QuoteChange"/>.
-		/// </summary>
-		public QuoteChange()
-		{
-		}
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="QuoteChange"/>.
 		/// </summary>
@@ -103,6 +96,15 @@ namespace StockSharp.Messages
 			Volume = volume;
 			OrdersCount = ordersCount;
 			Condition = condition;
+
+			StartPosition = null;
+			EndPosition = null;
+			Action = null;
+
+			BoardCode = null;
+			_extensionInfo = null;
+
+			_innerQuotes = null;
 		}
 
 		/// <summary>
@@ -182,26 +184,48 @@ namespace StockSharp.Messages
 		[DataMember]
 		public QuoteConditions Condition { get; set; }
 
+		private QuoteChange[] _innerQuotes;
+
 		/// <summary>
-		/// Create a copy of <see cref="QuoteChange"/>.
+		/// Collection of enclosed quotes, which are combined into a single quote.
 		/// </summary>
-		/// <returns>Copy.</returns>
-		public override QuoteChange Clone()
+		public QuoteChange[] InnerQuotes
 		{
-			var clone = new QuoteChange(Price, Volume, OrdersCount, Condition)
+			get => _innerQuotes;
+			set
 			{
-				StartPosition = StartPosition,
-				EndPosition = EndPosition,
-				Action = Action,
-			};
-			this.CopyExtensionInfo(clone);
-			return clone;
+				var wasNonNull = _innerQuotes != null;
+
+				_innerQuotes = value;
+
+				if (_innerQuotes is null)
+				{
+					if (wasNonNull)
+					{
+						Volume = default;
+						OrdersCount = default;
+					}
+				}
+				else
+				{
+					var volume = 0m;
+					var ordersCount = 0;
+
+					foreach (var item in value)
+					{
+						volume += item.Volume;
+
+						if (item.OrdersCount != null)
+							ordersCount += item.OrdersCount.Value;
+					}
+
+					Volume = volume;
+					OrdersCount = ordersCount.DefaultAsNull();
+				}
+			}
 		}
 
 		/// <inheritdoc />
-		public override string ToString()
-		{
-			return $"{Price} {Volume}";
-		}
+		public override string ToString() => $"{Price} {Volume}";
 	}
 }

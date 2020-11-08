@@ -180,13 +180,16 @@ namespace StockSharp.Algo.Storages.Csv
 				data.LowPrice.ToString(),
 				data.ClosePrice.ToString(),
 				data.TotalVolume.ToString()
-			});
+			}.Concat(data.BuildFrom.ToCsv()).Concat(new[]
+			{
+				data.SeqNum.DefaultAsNull().ToString(),
+			}));
 		}
 
 		/// <inheritdoc />
 		protected override TCandleMessage Read(FastCsvReader reader, IMarketDataMetaInfo metaInfo)
 		{
-			return new TCandleMessage
+			var message = new TCandleMessage
 			{
 				SecurityId = SecurityId,
 				Arg = Arg,
@@ -198,6 +201,14 @@ namespace StockSharp.Algo.Storages.Csv
 				TotalVolume = reader.ReadDecimal(),
 				State = CandleStates.Finished
 			};
+
+			if ((reader.ColumnCurr + 1) < reader.ColumnCount)
+				message.BuildFrom = reader.ReadBuildFrom();
+
+			if ((reader.ColumnCurr + 1) < reader.ColumnCount)
+				message.SeqNum = reader.ReadNullableLong() ?? 0L;
+
+			return message;
 		}
 	}
 }

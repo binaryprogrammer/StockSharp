@@ -78,8 +78,10 @@ namespace StockSharp.Algo.Testing
 		/// </summary>
 		public override void Init()
 		{
-			TradeGenerator.Init();
 			base.Init();
+		
+			_lastOrderPrice = default;
+			TradeGenerator.Init();
 		}
 
 		/// <inheritdoc />
@@ -102,10 +104,10 @@ namespace StockSharp.Algo.Testing
 				{
 					var l1Msg = (Level1ChangeMessage)message;
 
-					var value = l1Msg.Changes.TryGetValue(Level1Fields.LastTradePrice);
+					var value = l1Msg.TryGetDecimal(Level1Fields.LastTradePrice);
 
 					if (value != null)
-						_lastOrderPrice = (decimal)value;
+						_lastOrderPrice = value.Value;
 
 					TradeGenerator.Process(message);
 
@@ -236,11 +238,15 @@ namespace StockSharp.Algo.Testing
 		/// <returns>Copy.</returns>
 		public override MarketDataGenerator Clone()
 		{
-			return new OrderLogGenerator(SecurityId, TradeGenerator.TypedClone())
+			var clone = new OrderLogGenerator(SecurityId, TradeGenerator.TypedClone())
 			{
 				_lastOrderPrice = _lastOrderPrice,
 				IdGenerator = IdGenerator
 			};
+
+			CopyTo(clone);
+
+			return clone;
 		}
 	}
 }

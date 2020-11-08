@@ -28,7 +28,8 @@ namespace StockSharp.Messages
 	/// </summary>
 	[DataContract]
 	[Serializable]
-	public abstract class OrderMessage : SecurityMessage, ITransactionIdMessage, IPortfolioNameMessage
+	public abstract class OrderMessage : SecurityMessage,
+		ITransactionIdMessage, IPortfolioNameMessage, IStrategyIdMessage
 	{
 		/// <inheritdoc />
 		[DataMember]
@@ -61,6 +62,10 @@ namespace StockSharp.Messages
 		[DescriptionLoc(LocalizedStrings.Str166Key)]
 		[MainCategory]
 		public string UserOrderId { get; set; }
+
+		/// <inheritdoc />
+		[DataMember]
+		public string StrategyId { get; set; }
 
 		/// <summary>
 		/// Broker firm code.
@@ -97,10 +102,19 @@ namespace StockSharp.Messages
 		public string Comment { get; set; }
 
 		/// <summary>
+		/// Is margin enabled.
+		/// </summary>
+		[DataMember]
+		[DisplayNameLoc(LocalizedStrings.MarginKey)]
+		[DescriptionLoc(LocalizedStrings.IsMarginKey)]
+		[MainCategory]
+		public bool? IsMargin { get; set; }
+
+		/// <summary>
 		/// Copy the message into the <paramref name="destination" />.
 		/// </summary>
 		/// <param name="destination">The object, to which copied information.</param>
-		protected virtual void CopyTo(OrderMessage destination)
+		public void CopyTo(OrderMessage destination)
 		{
 			base.CopyTo(destination);
 
@@ -108,10 +122,12 @@ namespace StockSharp.Messages
 			destination.PortfolioName = PortfolioName;
 			destination.OrderType = OrderType;
 			destination.UserOrderId = UserOrderId;
+			destination.StrategyId = StrategyId;
 			destination.BrokerCode = BrokerCode;
 			destination.ClientCode = ClientCode;
 			destination.Condition = Condition?.Clone();
 			destination.Comment = Comment;
+			destination.IsMargin = IsMargin;
 		}
 
 		/// <summary>
@@ -126,13 +142,16 @@ namespace StockSharp.Messages
 		/// <inheritdoc />
 		public override string ToString()
 		{
-			var str = base.ToString() + $",TransId={TransactionId},OrdType={OrderType},Pf={PortfolioName}(ClCode={ClientCode}),Cond={Condition}";
+			var str = base.ToString() + $",TransId={TransactionId},OrdType={OrderType},Pf={PortfolioName}(ClCode={ClientCode}),Cond={Condition},MR={IsMargin}";
 
 			if (!Comment.IsEmpty())
 				str += $",Comment={Comment}";
 
 			if (!UserOrderId.IsEmpty())
 				str += $",UID={UserOrderId}";
+
+			if (!StrategyId.IsEmpty())
+				str += $",Strategy={StrategyId}";
 
 			if (!BrokerCode.IsEmpty())
 				str += $",BrID={BrokerCode}";

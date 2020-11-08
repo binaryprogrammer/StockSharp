@@ -15,26 +15,22 @@ namespace StockSharp.Algo.Strategies.Testing
 	using StockSharp.BusinessEntities;
 	using StockSharp.Messages;
 	using StockSharp.Logging;
+	using StockSharp.Localization;
 
 	/// <summary>
 	/// The batch emulator of strategies.
 	/// </summary>
 	public class BatchEmulation : BaseLogReceiver
 	{
-		private readonly SynchronizedDictionary<Strategy, Tuple<Portfolio, Security>> _strategyInfo = new SynchronizedDictionary<Strategy, Tuple<Portfolio, Security>>();
-
-		private IEnumerator<IEnumerable<Strategy>> _batches;
-		private Strategy[] _batch = ArrayHelper.Empty<Strategy>();
-		private IMessageChannel _currChannel;
 		private readonly List<HistoryEmulationConnector> _currentConnectors = new List<HistoryEmulationConnector>();
 		private IMessageAdapter _histAdapter;
 		private bool _cancelEmulation;
-		private int _totalBatches;
-		private int _currentBatch;
-		private double _batchWeight;
+
+		private readonly SyncObject _sync = new SyncObject();
 
 		private readonly ISecurityProvider _securityProvider;
 		private readonly IPortfolioProvider _portfolioProvider;
+		private readonly IExchangeInfoProvider _exchangeInfoProvider;
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="BatchEmulation"/>.
@@ -43,7 +39,7 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// <param name="portfolios">Portfolios, the operation will be performed with.</param>
 		/// <param name="storageRegistry">Market data storage.</param>
 		public BatchEmulation(IEnumerable<Security> securities, IEnumerable<Portfolio> portfolios, IStorageRegistry storageRegistry)
-			: this(new CollectionSecurityProvider(securities), new CollectionPortfolioProvider(portfolios), storageRegistry, StorageFormats.Binary, storageRegistry.DefaultDrive)
+			: this(new CollectionSecurityProvider(securities), new CollectionPortfolioProvider(portfolios), new InMemoryExchangeInfoProvider(), storageRegistry, StorageFormats.Binary, storageRegistry.DefaultDrive)
 		{
 		}
 
@@ -52,13 +48,15 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// </summary>
 		/// <param name="securityProvider">The provider of information about instruments.</param>
 		/// <param name="portfolioProvider">The portfolio to be used to register orders. If value is not given, the portfolio with default name Simulator will be created.</param>
+		/// <param name="exchangeInfoProvider">Exchanges and trading boards provider.</param>
 		/// <param name="storageRegistry">Market data storage.</param>
 		/// <param name="storageFormat">The format of market data. <see cref="StorageFormats.Binary"/> is used by default.</param>
 		/// <param name="drive">The storage which is used by default. By default, <see cref="IStorageRegistry.DefaultDrive"/> is used.</param>
-		public BatchEmulation(ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider, IStorageRegistry storageRegistry, StorageFormats storageFormat = StorageFormats.Binary, IMarketDataDrive drive = null)
+		public BatchEmulation(ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider, IExchangeInfoProvider exchangeInfoProvider, IStorageRegistry storageRegistry, StorageFormats storageFormat = StorageFormats.Binary, IMarketDataDrive drive = null)
 		{
 			_securityProvider = securityProvider ?? throw new ArgumentNullException(nameof(securityProvider));
 			_portfolioProvider = portfolioProvider ?? throw new ArgumentNullException(nameof(portfolioProvider));
+			_exchangeInfoProvider = exchangeInfoProvider ?? throw new ArgumentNullException(nameof(exchangeInfoProvider));
 
 			EmulationSettings = new EmulationSettings();
 
@@ -85,12 +83,12 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// </summary>
 		public bool IsFinished { get; private set; }
 
-		private EmulationStates _state = EmulationStates.Stopped;
+		private ChannelStates _state = ChannelStates.Stopped;
 		
 		/// <summary>
 		/// The emulator state.
 		/// </summary>
-		public EmulationStates State
+		public ChannelStates State
 		{
 			get => _state;
 			private set
@@ -105,22 +103,22 @@ namespace StockSharp.Algo.Strategies.Testing
 		}
 
 		/// <summary>
-		/// Current tested strategies.
-		/// </summary>
-		public IEnumerable<Strategy> BatchStrategies => _batch;
-
-		/// <summary>
 		/// The event on change of paper trade state.
 		/// </summary>
-		public event Action<EmulationStates, EmulationStates> StateChanged;
+		public event Action<ChannelStates, ChannelStates> StateChanged;
 
 		/// <summary>
-		/// The event of paper trade progress change.
+		/// The event of total progress change.
 		/// </summary>
-		public event Action<Connector, int, int> ProgressChanged;
+		public event Action<IEnumerable<Strategy>, int> TotalProgressChanged;
 
 		/// <summary>
-		/// Server time changed <see cref="Connector.CurrentTime"/>. It passed the time difference since the last call of the event. The first time the event passes the value <see cref="TimeSpan.Zero"/>.
+		/// The event of single progress change.
+		/// </summary>
+		public event Action<Strategy, int> SingleProgressChanged;
+
+		/// <summary>
+		/// Server time changed <see cref="ILogSource.CurrentTime"/>. It passed the time difference since the last call of the event. The first time the event passes the value <see cref="TimeSpan.Zero"/>.
 		/// </summary>
 		public event Action<Connector, TimeSpan> MarketTimeChanged;
 
@@ -131,59 +129,72 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// <param name="iterationCount">Iteration count.</param>
 		public void Start(IEnumerable<Strategy> strategies, int iterationCount)
 		{
-			if (strategies == null)
+			if (strategies is null)
 				throw new ArgumentNullException(nameof(strategies));
 
+			if (iterationCount <= 0)
+				throw new ArgumentOutOfRangeException(nameof(iterationCount), iterationCount, LocalizedStrings.Str1219);
+
 			_cancelEmulation = false;
-			_totalBatches = (int)((decimal)iterationCount / EmulationSettings.BatchSize).Ceiling();
-			_currentBatch = -1;
-			_batchWeight = 100.0 / _totalBatches;
+			
+			State = ChannelStates.Starting;
 
-			State = EmulationStates.Starting;
+			var totalBatches = (int)((decimal)iterationCount / EmulationSettings.BatchSize).Ceiling();
 
-			_batches = strategies.Batch(EmulationSettings.BatchSize).GetEnumerator();
+			if (totalBatches == 0)
+				throw new ArgumentOutOfRangeException("totalBatches == 0");
 
-			TryStartNextBatch();
+			var batchWeight = 100.0 / totalBatches;
+
+			TryStartNextBatch(strategies.Batch(EmulationSettings.BatchSize).GetEnumerator(), -1, totalBatches, batchWeight);
 		}
 
-		private void TryStartNextBatch()
+		private void TryStartNextBatch(IEnumerator<IEnumerable<Strategy>> batches,
+			int currentBatch, int totalBatches, double batchWeight)
 		{
-			if (_cancelEmulation || !_batches.MoveNext())
+			if (batches is null)
+				throw new ArgumentNullException(nameof(batches));
+
+			lock (_sync)
 			{
-				IsFinished = !_cancelEmulation;
-
-				State = EmulationStates.Stopping;
-				State = EmulationStates.Stopped;
-
-				if (_currChannel != null)
+				if (_cancelEmulation || !batches.MoveNext())
 				{
-					_currChannel.Dispose();
-					_currChannel = null;
+					IsFinished = !_cancelEmulation;
+
+					State = ChannelStates.Stopping;
+					State = ChannelStates.Stopped;
+
+					if (_histAdapter != null)
+					{
+						_histAdapter.Dispose();
+						_histAdapter = null;
+					}
+
+					return;
 				}
 
-				if (_histAdapter != null)
+				var batch = batches.Current.ToArray();
+				currentBatch++;
+
+				if (currentBatch == 0)
 				{
-					_histAdapter.Dispose();
-					_histAdapter = null;
+					State = ChannelStates.Starting;
+					State = ChannelStates.Started;
 				}
 
-				return;
+				InitAdapters(batches, batch, currentBatch, totalBatches, batchWeight);
 			}
-
-			_batch = _batches.Current.ToArray();
-			_currentBatch++;
-
-			if (_currentBatch == 0)
-			{
-				State = EmulationStates.Starting;
-				State = EmulationStates.Started;
-			}
-
-			InitAdapters();
 		}
 
-		private void InitAdapters()
+		private void InitAdapters(IEnumerator<IEnumerable<Strategy>> batches, Strategy[] batch,
+			int currentBatch, int totalBatches, double batchWeight)
 		{
+			if (batch is null)
+				throw new ArgumentNullException(nameof(batch));
+
+			if (batch.Length == 0)
+				throw new ArgumentOutOfRangeException(nameof(batch));
+
 			_histAdapter = new SubscriptionOnlineMessageAdapter(new HistoryMessageAdapter(new IncrementalIdGenerator(), _securityProvider)
 			{
 				StorageRegistry = StorageSettings.StorageRegistry,
@@ -194,18 +205,18 @@ namespace StockSharp.Algo.Strategies.Testing
 				Parent = this,
 			});
 
-			_currChannel = new InMemoryMessageChannel(new MessageByLocalTimeQueue(), "Emulator in", _histAdapter.AddErrorLog);
-
 			var progress = new SynchronizedDictionary<HistoryEmulationConnector, int>();
-			var left = _batch.Length;
+			var left = batch.Length;
+
+			var nextProgress = 1;
 
 			_currentConnectors.Clear();
 
-			foreach (var strategy in _batch)
+			foreach (var strategy in batch)
 			{
-				_strategyInfo[strategy] = Tuple.Create(strategy.Portfolio, strategy.Security);
+				var inChannel = new InMemoryMessageChannel(new MessageByLocalTimeQueue(), "Emulator in", _histAdapter.AddErrorLog) { SuspendMaxCount = int.MaxValue };
 
-				var connector = new HistoryEmulationConnector(_histAdapter, false, _currChannel, _securityProvider, _portfolioProvider)
+				var connector = new HistoryEmulationConnector(_histAdapter, false, inChannel, _securityProvider, _portfolioProvider, _exchangeInfoProvider)
 				{
 					Parent = this,
 				};
@@ -216,41 +227,49 @@ namespace StockSharp.Algo.Strategies.Testing
 				strategy.Reset();
 				strategy.Start();
 
-				connector.Connect();
-
 				progress.Add(connector, 0);
 
 				connector.ProgressChanged += step =>
 				{
-					var avgStep = 0.0;
+					SingleProgressChanged?.Invoke(strategy, step);
+
+					var avgStep = 0;
 
 					lock (progress.SyncRoot)
 					{
 						progress[connector] = step;
-						avgStep = progress.Values.Average();
+						avgStep = (int)progress.Values.Average();
 					}
 
-					ProgressChanged?.Invoke(connector, step, (int)(_currentBatch * _batchWeight + ((avgStep * _batchWeight) / 100)));
+					if (avgStep < nextProgress)
+						return;
+
+					nextProgress++;
+
+					TotalProgressChanged?.Invoke(batch, (int)(currentBatch * batchWeight + ((avgStep * batchWeight) / 100)));
 				};
 
 				connector.MarketTimeChanged += diff => MarketTimeChanged?.Invoke(connector, diff);
 
 				connector.StateChanged += () =>
 				{
-					if (connector.State == EmulationStates.Stopped)
+					if (connector.State == ChannelStates.Stopped)
 					{
 						left--;
 
 						if (left == 0)
-							TryStartNextBatch();
+							TryStartNextBatch(batches, currentBatch, totalBatches, batchWeight);
 					}
 				};
 
 				_currentConnectors.Add(connector);
 			}
 
+			foreach (var connectors in _currentConnectors)
+				connectors.Connect();
+
 			_histAdapter.SendInMessage(new ConnectMessage());
-			_histAdapter.SendInMessage(new EmulationStateMessage { State = EmulationStates.Starting });
+			_histAdapter.SendInMessage(new EmulationStateMessage { State = ChannelStates.Starting });
 		}
 
 		/// <summary>
@@ -258,16 +277,21 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// </summary>
 		public void Suspend()
 		{
-			State = EmulationStates.Suspending;
+			lock (_sync)
+			{
+				if (State != ChannelStates.Started)
+					return;
 
-			var channel = _currChannel;
+				State = ChannelStates.Suspending;
 
-			if (channel == null)
-				throw new InvalidOperationException();
+				foreach (var connector in _currentConnectors)
+				{
+					if (connector.State == ChannelStates.Started)
+						connector.Suspend();
+				}
 
-			channel.Suspend();
-
-			State = EmulationStates.Suspended;
+				State = ChannelStates.Suspended;
+			}
 		}
 
 		/// <summary>
@@ -275,16 +299,21 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// </summary>
 		public void Resume()
 		{
-			State = EmulationStates.Starting;
+			lock (_sync)
+			{
+				if (State != ChannelStates.Suspended)
+					return;
 
-			var channel = _currChannel;
+				State = ChannelStates.Starting;
 
-			if (channel == null)
-				throw new InvalidOperationException();
+				foreach (var connector in _currentConnectors)
+				{
+					if (connector.State == ChannelStates.Suspended)
+						connector.Start();
+				}
 
-			channel.Resume();
-
-			State = EmulationStates.Started;
+				State = ChannelStates.Started;
+			}
 		}
 
 		/// <summary>
@@ -292,22 +321,27 @@ namespace StockSharp.Algo.Strategies.Testing
 		/// </summary>
 		public void Stop()
 		{
-			var channel = _currChannel;
+			lock (_sync)
+			{
+				if (!(State == ChannelStates.Started || State == ChannelStates.Suspended))
+					return;
 
-			if (channel == null)
-				throw new InvalidOperationException();
+				State = ChannelStates.Stopping;
 
-			channel.Clear();
-			channel.Resume();
+				_cancelEmulation = true;
 
-			State = EmulationStates.Stopping;
-
-			_cancelEmulation = true;
+				foreach (var connector in _currentConnectors)
+				{
+					if (connector.State == ChannelStates.Started ||
+						connector.State == ChannelStates.Starting ||
+						connector.State == ChannelStates.Suspended ||
+						connector.State == ChannelStates.Suspending)
+						connector.Disconnect();
+				}
 			
-			_histAdapter.SendInMessage(new EmulationStateMessage { State = EmulationStates.Stopping });
-			_histAdapter.SendInMessage(new DisconnectMessage());
-
-			_currentConnectors.Clear();
+				_histAdapter.SendInMessage(new EmulationStateMessage { State = ChannelStates.Stopping });
+				_histAdapter.SendInMessage(new DisconnectMessage());
+			}
 		}
 	}
 }

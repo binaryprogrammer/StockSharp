@@ -30,7 +30,7 @@ namespace StockSharp.Algo.Storages.Csv
 	/// </summary>
 	public class Level1CsvSerializer : CsvMarketDataSerializer<Level1ChangeMessage>
 	{
-		private static readonly Dictionary<Level1Fields, Type> _level1Fields = Enumerator.GetValues<Level1Fields>().Where(l1 => !l1.IsObsolete()).OrderBy(l1 => (int)l1).ToDictionary(f => f, f => f.ToType());
+		private static readonly Dictionary<Level1Fields, Type> _level1Fields = Enumerator.GetValues<Level1Fields>().ExcludeObsolete().OrderBy(l1 => (int)l1).ToDictionary(f => f, f => f.ToType());
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="Level1CsvSerializer"/>.
@@ -42,6 +42,8 @@ namespace StockSharp.Algo.Storages.Csv
 		{
 		}
 
+		private static readonly string[] _reserved = new string[9];
+
 		/// <inheritdoc />
 		protected override void Write(CsvFileWriter writer, Level1ChangeMessage data, IMarketDataMetaInfo metaInfo)
 		{
@@ -49,18 +51,26 @@ namespace StockSharp.Algo.Storages.Csv
 
 			row.AddRange(new[] { data.ServerTime.WriteTimeMls(), data.ServerTime.ToString("zzz") });
 
+			row.AddRange(data.BuildFrom.ToCsv());
+
+			row.Add(data.SeqNum.DefaultAsNull().ToString());
+
+			row.AddRange(_reserved);
+
+			row.Add(_level1Fields.Count.To<string>());
+
 			foreach (var pair in _level1Fields)
 			{
 				var field = pair.Key;
 
 				if (pair.Value == typeof(DateTimeOffset))
 				{
-					var date = (DateTimeOffset?)data.Changes.TryGetValue(field);
+					var date = (DateTimeOffset?)data.TryGet(field);
 					row.AddRange(new[] { date?.WriteDate(), date?.WriteTimeMls(), date?.ToString("zzz") });
 				}
 				else
 				{
-					row.Add(data.Changes.TryGetValue(field)?.ToString());
+					row.Add(data.TryGet(field)?.ToString());
                 }
 			}
 
@@ -76,9 +86,15 @@ namespace StockSharp.Algo.Storages.Csv
 			{
 				SecurityId = SecurityId,
 				ServerTime = reader.ReadTime(metaInfo.Date),
+				BuildFrom = reader.ReadBuildFrom(),
+				SeqNum = reader.ReadNullableLong() ?? 0L,
 			};
 
-			foreach (var pair in _level1Fields)
+			reader.Skip(_reserved.Length);
+
+			var count = reader.ReadInt();
+
+			foreach (var pair in _level1Fields.Take(count))
 			{
 				// backward compatibility
 				if (reader.ColumnCurr == reader.ColumnCount)
@@ -133,6 +149,13 @@ namespace StockSharp.Algo.Storages.Csv
 
 					if (value != null)
 						level1.Changes.Add(field, value.Value);
+				}
+				else if (pair.Value == typeof(string))
+				{
+					var value = reader.ReadString();
+
+					if (!value.IsEmpty())
+						level1.Changes.Add(field, value);
 				}
 				else
 				{

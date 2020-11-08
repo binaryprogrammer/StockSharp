@@ -31,96 +31,115 @@ namespace StockSharp.BusinessEntities
 		/// <summary>
 		/// Own trades received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<MyTrade>> NewMyTrades;
 
 		/// <summary>
 		/// Tick trades received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Trade>> NewTrades;
 
 		/// <summary>
 		/// Orders received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Order>> NewOrders;
 
 		/// <summary>
 		/// Orders changed (cancelled, matched).
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Order>> OrdersChanged;
 
 		/// <summary>
 		/// Order registration errors event.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<OrderFail>> OrdersRegisterFailed;
 
 		/// <summary>
 		/// Order cancellation errors event.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<OrderFail>> OrdersCancelFailed;
 
 		/// <summary>
 		/// Stop-order registration errors event.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<OrderFail>> StopOrdersRegisterFailed;
 
 		/// <summary>
 		/// Stop-order cancellation errors event.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<OrderFail>> StopOrdersCancelFailed;
 
 		/// <summary>
 		/// Stop-orders received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Order>> NewStopOrders;
 
 		/// <summary>
 		/// Stop orders state change event.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Order>> StopOrdersChanged;
 
 		/// <summary>
 		/// Securities received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Security>> NewSecurities;
 
 		/// <summary>
 		/// Securities changed.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Security>> SecuritiesChanged;
 
 		/// <summary>
 		/// Portfolios received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Portfolio>> NewPortfolios;
 
 		/// <summary>
 		/// Portfolios changed.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Portfolio>> PortfoliosChanged;
 
 		/// <summary>
 		/// Positions received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Position>> NewPositions;
 
 		/// <summary>
 		/// Positions changed.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<Position>> PositionsChanged;
 
 		/// <summary>
 		/// Order books received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<MarketDepth>> NewMarketDepths;
 
 		/// <summary>
 		/// Order books changed.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<MarketDepth>> MarketDepthsChanged;
 
 		/// <summary>
 		/// Order log received.
 		/// </summary>
+		[Obsolete("Use single item event overload.")]
 		event Action<IEnumerable<OrderLogItem>> NewOrderLogItems;
 
 		/// <summary>
@@ -308,43 +327,11 @@ namespace StockSharp.BusinessEntities
 		void Disconnect();
 
 		/// <summary>
-		/// To find instruments that match the filter <paramref name="criteria" />. Found instruments will be passed through the event <see cref="IMarketDataProvider.LookupSecuritiesResult"/>.
-		/// </summary>
-		/// <param name="criteria">The criterion which fields will be used as a filter.</param>
-		/// <param name="adapter">Target adapter. Can be <see langword="null" />.</param>
-		/// <param name="offlineMode">Offline mode handling message.</param>
-		void LookupSecurities(Security criteria, IMessageAdapter adapter = null, MessageOfflineModes offlineMode = MessageOfflineModes.None);
-
-		/// <summary>
 		/// Get <see cref="SecurityId"/>.
 		/// </summary>
 		/// <param name="security">Security.</param>
 		/// <returns>Security ID.</returns>
 		SecurityId GetSecurityId(Security security);
-
-		/// <summary>
-		/// To find boards that match the filter <paramref name="criteria" />. Found boards will be passed through the event <see cref="IMarketDataProvider.LookupBoardsResult"/>.
-		/// </summary>
-		/// <param name="criteria">The criterion which fields will be used as a filter.</param>
-		/// <param name="adapter">Target adapter. Can be <see langword="null" />.</param>
-		/// <param name="offlineMode">Offline mode handling message.</param>
-		void LookupBoards(ExchangeBoard criteria, IMessageAdapter adapter = null, MessageOfflineModes offlineMode = MessageOfflineModes.None);
-
-		/// <summary>
-		/// To find portfolios that match the filter <paramref name="criteria" />. Found portfolios will be passed through the event <see cref="ITransactionProvider.LookupPortfoliosResult"/>.
-		/// </summary>
-		/// <param name="criteria">The criterion which fields will be used as a filter.</param>
-		/// <param name="adapter">Target adapter. Can be <see langword="null" />.</param>
-		/// <param name="offlineMode">Offline mode handling message.</param>
-		void LookupPortfolios(Portfolio criteria, IMessageAdapter adapter = null, MessageOfflineModes offlineMode = MessageOfflineModes.None);
-
-		/// <summary>
-		/// To find orders that match the filter <paramref name="criteria" />. Found orders will be passed through the event <see cref="ITransactionProvider.NewOrder"/>.
-		/// </summary>
-		/// <param name="criteria">The order which fields will be used as a filter.</param>
-		/// <param name="adapter">Target adapter. Can be <see langword="null" />.</param>
-		/// <param name="offlineMode">Offline mode handling message.</param>
-		void LookupOrders(Order criteria, IMessageAdapter adapter = null, MessageOfflineModes offlineMode = MessageOfflineModes.None);
 
 		/// <summary>
 		/// Get security by identifier.

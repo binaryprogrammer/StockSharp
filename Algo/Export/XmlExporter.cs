@@ -42,27 +42,40 @@ namespace StockSharp.Algo.Export
 		{
 		}
 
+		/// <summary>
+		/// Gets or sets a value indicating whether to indent elements.
+		/// </summary>
+		/// <remarks>
+		/// By default is <see langword="true"/>.
+		/// </remarks>
+		public bool Indent { get; set; } = true;
+
 		/// <inheritdoc />
-		protected override void ExportOrderLog(IEnumerable<ExecutionMessage> messages)
+		protected override (int, DateTimeOffset?) ExportOrderLog(IEnumerable<ExecutionMessage> messages)
 		{
-			Do(messages, "orderLog", (writer, item) =>
+			return Do(messages, "orderLog", (writer, item) =>
 			{
 				writer.WriteStartElement("item");
 
-				writer.WriteAttribute("id", item.OrderId == null ? item.OrderStringId : item.OrderId.To<string>());
-				writer.WriteAttribute("serverTime", item.ServerTime.ToString(_timeFormat));
-				writer.WriteAttribute("localTime", item.LocalTime.ToString(_timeFormat));
-				writer.WriteAttribute("price", item.OrderPrice);
-				writer.WriteAttribute("volume", item.OrderVolume);
-				writer.WriteAttribute("side", item.Side);
-				writer.WriteAttribute("state", item.OrderState);
-				writer.WriteAttribute("timeInForce", item.TimeInForce);
-				writer.WriteAttribute("isSystem", item.IsSystem);
+				writer
+					.WriteAttribute("id", item.OrderId == null ? item.OrderStringId : item.OrderId.To<string>())
+					.WriteAttribute("serverTime", item.ServerTime.ToString(_timeFormat))
+					.WriteAttribute("localTime", item.LocalTime.ToString(_timeFormat))
+					.WriteAttribute("price", item.OrderPrice)
+					.WriteAttribute("volume", item.OrderVolume)
+					.WriteAttribute("side", item.Side)
+					.WriteAttribute("state", item.OrderState)
+					.WriteAttribute("timeInForce", item.TimeInForce)
+					.WriteAttribute("isSystem", item.IsSystem);
+
+				if (item.SeqNum != default)
+					writer.WriteAttribute("seqNum", item.SeqNum);
 
 				if (item.TradePrice != null)
 				{
-					writer.WriteAttribute("tradeId", item.TradeId == null ? item.TradeStringId : item.TradeId.To<string>());
-					writer.WriteAttribute("tradePrice", item.TradePrice);
+					writer
+						.WriteAttribute("tradeId", item.TradeId == null ? item.TradeStringId : item.TradeId.To<string>())
+						.WriteAttribute("tradePrice", item.TradePrice);
 
 					if (item.OpenInterest != null)
 						writer.WriteAttribute("openInterest", item.OpenInterest.Value);
@@ -73,17 +86,18 @@ namespace StockSharp.Algo.Export
 		}
 
 		/// <inheritdoc />
-		protected override void ExportTicks(IEnumerable<ExecutionMessage> messages)
+		protected override (int, DateTimeOffset?) ExportTicks(IEnumerable<ExecutionMessage> messages)
 		{
-			Do(messages, "ticks", (writer, trade) =>
+			return Do(messages, "ticks", (writer, trade) =>
 			{
 				writer.WriteStartElement("trade");
 
-				writer.WriteAttribute("id", trade.TradeId == null ? trade.TradeStringId : trade.TradeId.To<string>());
-				writer.WriteAttribute("serverTime", trade.ServerTime.ToString(_timeFormat));
-				writer.WriteAttribute("localTime", trade.LocalTime.ToString(_timeFormat));
-				writer.WriteAttribute("price", trade.TradePrice);
-				writer.WriteAttribute("volume", trade.TradeVolume);
+				writer
+					.WriteAttribute("id", trade.TradeId == null ? trade.TradeStringId : trade.TradeId.To<string>())
+					.WriteAttribute("serverTime", trade.ServerTime.ToString(_timeFormat))
+					.WriteAttribute("localTime", trade.LocalTime.ToString(_timeFormat))
+					.WriteAttribute("price", trade.TradePrice)
+					.WriteAttribute("volume", trade.TradeVolume);
 
 				if (trade.OriginSide != null)
 					writer.WriteAttribute("originSide", trade.OriginSide.Value);
@@ -97,71 +111,103 @@ namespace StockSharp.Algo.Export
 				if (trade.Currency != null)
 					writer.WriteAttribute("currency", trade.Currency.Value);
 
+				if (trade.SeqNum != default)
+					writer.WriteAttribute("seqNum", trade.SeqNum);
+
+				if (trade.Yield != default)
+					writer.WriteAttribute("yield", trade.Yield);
+
+				if (trade.OrderBuyId != default)
+					writer.WriteAttribute("buy", trade.OrderBuyId);
+
+				if (trade.OrderSellId != default)
+					writer.WriteAttribute("sell", trade.OrderSellId);
+
 				writer.WriteEndElement();
 			});
 		}
 
 		/// <inheritdoc />
-		protected override void ExportTransactions(IEnumerable<ExecutionMessage> messages)
+		protected override (int, DateTimeOffset?) ExportTransactions(IEnumerable<ExecutionMessage> messages)
 		{
-			Do(messages, "transactions", (writer, item) =>
+			return Do(messages, "transactions", (writer, item) =>
 			{
 				writer.WriteStartElement("item");
 
-				writer.WriteAttribute("serverTime", item.ServerTime.ToString(_timeFormat));
-				writer.WriteAttribute("localTime", item.LocalTime.ToString(_timeFormat));
-				writer.WriteAttribute("portfolio", item.PortfolioName);
-				writer.WriteAttribute("clientCode", item.ClientCode);
-				writer.WriteAttribute("brokerCode", item.BrokerCode);
-				writer.WriteAttribute("depoName", item.DepoName);
-				writer.WriteAttribute("transactionId", item.TransactionId);
-				writer.WriteAttribute("originalTransactionId", item.OriginalTransactionId);
-				writer.WriteAttribute("orderId", item.OrderId == null ? item.OrderStringId : item.OrderId.To<string>());
-				//writer.WriteAttribute("derivedOrderId", item.DerivedOrderId == null ? item.DerivedOrderStringId : item.DerivedOrderId.To<string>());
-				writer.WriteAttribute("orderPrice", item.OrderPrice);
-				writer.WriteAttribute("orderVolume", item.OrderVolume);
-				writer.WriteAttribute("orderType", item.OrderType);
-				writer.WriteAttribute("orderState", item.OrderState);
-				writer.WriteAttribute("orderStatus", item.OrderStatus);
-				writer.WriteAttribute("visibleVolume", item.VisibleVolume);
-				writer.WriteAttribute("balance", item.Balance);
-				writer.WriteAttribute("side", item.Side);
-				writer.WriteAttribute("originSide", item.OriginSide);
-				writer.WriteAttribute("tradeId", item.TradeId == null ? item.TradeStringId : item.TradeId.To<string>());
-				writer.WriteAttribute("tradePrice", item.TradePrice);
-				writer.WriteAttribute("tradeVolume", item.TradeVolume);
-				writer.WriteAttribute("tradeStatus", item.TradeStatus);
-				writer.WriteAttribute("isOrder", item.HasOrderInfo);
-				writer.WriteAttribute("isTrade", item.HasTradeInfo);
-				writer.WriteAttribute("commission", item.Commission);
-				writer.WriteAttribute("commissionCurrency", item.CommissionCurrency);
-				writer.WriteAttribute("pnl", item.PnL);
-				writer.WriteAttribute("position", item.Position);
-				writer.WriteAttribute("latency", item.Latency);
-				writer.WriteAttribute("slippage", item.Slippage);
-				writer.WriteAttribute("error", item.Error?.Message);
-				writer.WriteAttribute("currency", item.Currency);
-				writer.WriteAttribute("openInterest", item.OpenInterest);
-				writer.WriteAttribute("isCancelled", item.IsCancellation);
-				writer.WriteAttribute("isSystem", item.IsSystem);
-				writer.WriteAttribute("isUpTick", item.IsUpTick);
-				writer.WriteAttribute("isMargin", item.IsMargin);
-				writer.WriteAttribute("isMarketMaker", item.IsMarketMaker);
-				writer.WriteAttribute("isManual", item.IsManual);
+				writer
+					.WriteAttribute("serverTime", item.ServerTime.ToString(_timeFormat))
+					.WriteAttribute("localTime", item.LocalTime.ToString(_timeFormat))
+					.WriteAttribute("portfolio", item.PortfolioName)
+					.WriteAttribute("clientCode", item.ClientCode)
+					.WriteAttribute("brokerCode", item.BrokerCode)
+					.WriteAttribute("depoName", item.DepoName)
+					.WriteAttribute("transactionId", item.TransactionId)
+					.WriteAttribute("originalTransactionId", item.OriginalTransactionId)
+					.WriteAttribute("orderId", item.OrderId == null ? item.OrderStringId : item.OrderId.To<string>())
+					.WriteAttribute("orderPrice", item.OrderPrice)
+					.WriteAttribute("orderVolume", item.OrderVolume)
+					.WriteAttribute("orderType", item.OrderType)
+					.WriteAttribute("orderState", item.OrderState)
+					.WriteAttribute("orderStatus", item.OrderStatus)
+					.WriteAttribute("visibleVolume", item.VisibleVolume)
+					.WriteAttribute("balance", item.Balance)
+					.WriteAttribute("side", item.Side)
+					.WriteAttribute("originSide", item.OriginSide)
+					.WriteAttribute("tradeId", item.TradeId == null ? item.TradeStringId : item.TradeId.To<string>())
+					.WriteAttribute("tradePrice", item.TradePrice)
+					.WriteAttribute("tradeVolume", item.TradeVolume)
+					.WriteAttribute("tradeStatus", item.TradeStatus)
+					.WriteAttribute("isOrder", item.HasOrderInfo)
+					.WriteAttribute("isTrade", item.HasTradeInfo)
+					.WriteAttribute("commission", item.Commission)
+					.WriteAttribute("commissionCurrency", item.CommissionCurrency)
+					.WriteAttribute("pnl", item.PnL)
+					.WriteAttribute("position", item.Position)
+					.WriteAttribute("latency", item.Latency)
+					.WriteAttribute("slippage", item.Slippage)
+					.WriteAttribute("error", item.Error?.Message)
+					.WriteAttribute("openInterest", item.OpenInterest)
+					.WriteAttribute("isCancelled", item.IsCancellation)
+					.WriteAttribute("isSystem", item.IsSystem)
+					.WriteAttribute("isUpTick", item.IsUpTick)
+					.WriteAttribute("userOrderId", item.UserOrderId)
+					.WriteAttribute("strategyId", item.StrategyId)
+					.WriteAttribute("currency", item.Currency)
+					.WriteAttribute("isMargin", item.IsMargin)
+					.WriteAttribute("isMarketMaker", item.IsMarketMaker)
+					.WriteAttribute("isManual", item.IsManual)
+					.WriteAttribute("averagePrice", item.AveragePrice)
+					.WriteAttribute("yield", item.Yield)
+					.WriteAttribute("minVolume", item.MinVolume)
+					.WriteAttribute("positionEffect", item.PositionEffect)
+					.WriteAttribute("postOnly", item.PostOnly)
+					.WriteAttribute("initiator", item.Initiator)
+					.WriteAttribute("seqNum", item.SeqNum)
+					.WriteAttribute("leverage", item.Leverage);
 
 				writer.WriteEndElement();
 			});
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<QuoteChangeMessage> messages)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<QuoteChangeMessage> messages)
 		{
-			Do(messages, "depths", (writer, depth) =>
+			return Do(messages, "depths", (writer, depth) =>
 			{
 				writer.WriteStartElement("depth");
 
-				writer.WriteAttribute("serverTime", depth.ServerTime.ToString(_timeFormat));
-				writer.WriteAttribute("localTime", depth.LocalTime.ToString(_timeFormat));
+				writer
+					.WriteAttribute("serverTime", depth.ServerTime.ToString(_timeFormat))
+					.WriteAttribute("localTime", depth.LocalTime.ToString(_timeFormat));
+
+				if (depth.State != null)
+					writer.WriteAttribute("state", depth.State.Value);
+
+				if (depth.HasPositions)
+					writer.WriteAttribute("pos", true);
+
+				if (depth.SeqNum != default)
+					writer.WriteAttribute("seqNum", depth.SeqNum);
 
 				var bids = new HashSet<QuoteChange>(depth.Bids);
 
@@ -169,12 +215,22 @@ namespace StockSharp.Algo.Export
 				{
 					writer.WriteStartElement("quote");
 
-					writer.WriteAttribute("price", quote.Price);
-					writer.WriteAttribute("volume", quote.Volume);
-					writer.WriteAttribute("side", bids.Contains(quote) ? Sides.Buy : Sides.Sell);
+					writer
+						.WriteAttribute("price", quote.Price)
+						.WriteAttribute("volume", quote.Volume)
+						.WriteAttribute("side", bids.Contains(quote) ? Sides.Buy : Sides.Sell);
 
-					if (quote.OrdersCount != null)
+					if (quote.OrdersCount != default)
 						writer.WriteAttribute("ordersCount", quote.OrdersCount.Value);
+
+					if (quote.StartPosition != default)
+						writer.WriteAttribute("startPos", quote.StartPosition.Value);
+
+					if (quote.EndPosition != default)
+						writer.WriteAttribute("endPos", quote.EndPosition.Value);
+
+					if (quote.Action != default)
+						writer.WriteAttribute("action", quote.Action.Value);
 
 					if (quote.Condition != default)
 						writer.WriteAttribute("condition", quote.Condition);
@@ -187,14 +243,18 @@ namespace StockSharp.Algo.Export
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<Level1ChangeMessage> messages)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<Level1ChangeMessage> messages)
 		{
-			Do(messages, "level1", (writer, message) =>
+			return Do(messages, "level1", (writer, message) =>
 			{
 				writer.WriteStartElement("change");
 
-				writer.WriteAttribute("serverTime", message.ServerTime.ToString(_timeFormat));
-				writer.WriteAttribute("localTime", message.LocalTime.ToString(_timeFormat));
+				writer
+					.WriteAttribute("serverTime", message.ServerTime.ToString(_timeFormat))
+					.WriteAttribute("localTime", message.LocalTime.ToString(_timeFormat));
+
+				if (message.SeqNum != default)
+					writer.WriteAttribute("seqNum", message.SeqNum);
 
 				foreach (var pair in message.Changes)
 					writer.WriteAttribute(pair.Key.ToString(), (pair.Value as DateTime?)?.ToString(_timeFormat) ?? pair.Value);
@@ -204,19 +264,23 @@ namespace StockSharp.Algo.Export
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<PositionChangeMessage> messages)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<PositionChangeMessage> messages)
 		{
-			Do(messages, "positions", (writer, message) =>
+			return Do(messages, "positions", (writer, message) =>
 			{
 				writer.WriteStartElement("change");
 
-				writer.WriteAttribute("serverTime", message.ServerTime.ToString(_timeFormat));
-				writer.WriteAttribute("localTime", message.LocalTime.ToString(_timeFormat));
+				writer
+					.WriteAttribute("serverTime", message.ServerTime.ToString(_timeFormat))
+					.WriteAttribute("localTime", message.LocalTime.ToString(_timeFormat))
 
-				writer.WriteAttribute("portfolio", message.PortfolioName);
-				writer.WriteAttribute("clientCode", message.ClientCode);
-				writer.WriteAttribute("depoName", message.DepoName);
-				writer.WriteAttribute("limit", message.LimitType);
+					.WriteAttribute("portfolio", message.PortfolioName)
+					.WriteAttribute("clientCode", message.ClientCode)
+					.WriteAttribute("depoName", message.DepoName)
+					.WriteAttribute("limit", message.LimitType)
+					.WriteAttribute("strategyId", message.StrategyId)
+					.WriteAttribute("side", message.Side)
+					;
 
 				foreach (var pair in message.Changes.Where(c => !c.Key.IsObsolete()))
 					writer.WriteAttribute(pair.Key.ToString(), (pair.Value as DateTime?)?.ToString(_timeFormat) ?? pair.Value);
@@ -226,9 +290,9 @@ namespace StockSharp.Algo.Export
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<IndicatorValue> values)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<IndicatorValue> values)
 		{
-			Do(values, "values", (writer, value) =>
+			return Do(values, "values", (writer, value) =>
 			{
 				writer.WriteStartElement("value");
 
@@ -243,32 +307,58 @@ namespace StockSharp.Algo.Export
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<CandleMessage> messages)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<CandleMessage> messages)
 		{
-			Do(messages, "candles", (writer, candle) =>
+			return Do(messages, "candles", (writer, candle) =>
 			{
 				writer.WriteStartElement("candle");
 
-				writer.WriteAttribute("openTime", candle.OpenTime.ToString(_timeFormat));
-				writer.WriteAttribute("closeTime", candle.CloseTime.ToString(_timeFormat));
+				writer
+					.WriteAttribute("openTime", candle.OpenTime.ToString(_timeFormat))
+					.WriteAttribute("closeTime", candle.CloseTime.ToString(_timeFormat))
 
-				writer.WriteAttribute("O", candle.OpenPrice);
-				writer.WriteAttribute("H", candle.HighPrice);
-				writer.WriteAttribute("L", candle.LowPrice);
-				writer.WriteAttribute("C", candle.ClosePrice);
-				writer.WriteAttribute("V", candle.TotalVolume);
+					.WriteAttribute("O", candle.OpenPrice)
+					.WriteAttribute("H", candle.HighPrice)
+					.WriteAttribute("L", candle.LowPrice)
+					.WriteAttribute("C", candle.ClosePrice)
+					.WriteAttribute("V", candle.TotalVolume);
 
 				if (candle.OpenInterest != null)
 					writer.WriteAttribute("openInterest", candle.OpenInterest.Value);
+
+				if (candle.SeqNum != default)
+					writer.WriteAttribute("seqNum", candle.SeqNum);
+
+				if (candle.PriceLevels != null)
+				{
+					writer.WriteStartElement("levels");
+
+					foreach (var level in candle.PriceLevels)
+					{
+						writer.WriteStartElement("level");
+
+						writer
+							.WriteAttribute("price", level.Price)
+							.WriteAttribute("buyCount", level.BuyCount)
+							.WriteAttribute("sellCount", level.SellCount)
+							.WriteAttribute("buyVolume", level.BuyVolume)
+							.WriteAttribute("sellVolume", level.SellVolume)
+							.WriteAttribute("volume", level.TotalVolume);
+
+						writer.WriteEndElement();
+					}
+
+					writer.WriteEndElement();
+				}
 
 				writer.WriteEndElement();
 			});
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<NewsMessage> messages)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<NewsMessage> messages)
 		{
-			Do(messages, "news", (writer, n) =>
+			return Do(messages, "news", (writer, n) =>
 			{
 				writer.WriteStartElement("item");
 
@@ -304,14 +394,17 @@ namespace StockSharp.Algo.Export
 				if (!n.Story.IsEmpty())
 					writer.WriteCData(n.Story);
 
+				if (n.SeqNum != default)
+					writer.WriteAttribute("seqNum", n.SeqNum);
+
 				writer.WriteEndElement();
 			});
 		}
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<SecurityMessage> messages)
+		protected override (int, DateTimeOffset?) Export(IEnumerable<SecurityMessage> messages)
 		{
-			Do(messages, "securities", (writer, security) =>
+			return Do(messages, "securities", (writer, security) =>
 			{
 				writer.WriteStartElement("security");
 
@@ -378,9 +471,6 @@ namespace StockSharp.Algo.Export
 				if (security.UnderlyingSecurityMinVolume != null)
 					writer.WriteAttribute("underlyingSecurityMinVolume", security.UnderlyingSecurityMinVolume.Value);
 
-				if (security.UnderlyingSecurityMinVolume != null)
-					writer.WriteAttribute("underlyingSecurityMinVolume", security.UnderlyingSecurityMinVolume.Value);
-
 				if (security.ExpiryDate != null)
 					writer.WriteAttribute("expiryDate", security.ExpiryDate.Value.ToString("yyyy-MM-dd"));
 
@@ -430,9 +520,12 @@ namespace StockSharp.Algo.Export
 			});
 		}
 
-		private void Do<TValue>(IEnumerable<TValue> values, string rootElem, Action<XmlWriter, TValue> action)
+		private (int, DateTimeOffset?) Do<TValue>(IEnumerable<TValue> values, string rootElem, Action<XmlWriter, TValue> action)
 		{
-			using (var writer = XmlWriter.Create(Path, new XmlWriterSettings { Indent = true }))
+			var count = 0;
+			var lastTime = default(DateTimeOffset?);
+			
+			using (var writer = XmlWriter.Create(Path, new XmlWriterSettings { Indent = Indent }))
 			{
 				writer.WriteStartElement(rootElem);
 
@@ -442,10 +535,17 @@ namespace StockSharp.Algo.Export
 						break;
 
 					action(writer, value);
+
+					count++;
+
+					if (value is IServerTimeMessage timeMsg)
+						lastTime = timeMsg.ServerTime;
 				}
 
 				writer.WriteEndElement();
 			}
+
+			return (count, lastTime);
 		}
 	}
 }

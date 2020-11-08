@@ -228,21 +228,6 @@ namespace SampleOptionQuoting
 			remove => throw new NotSupportedException();
 		}
 
-		void IMarketDataProvider.LookupSecurities(SecurityLookupMessage criteria)
-		{
-			throw new NotSupportedException();
-		}
-
-		void IMarketDataProvider.LookupBoards(BoardLookupMessage criteria)
-		{
-			throw new NotSupportedException();
-		}
-
-		void IMarketDataProvider.LookupTimeFrames(TimeFrameLookupMessage criteria)
-		{
-			throw new NotSupportedException();
-		}
-
 		MarketDepth IMarketDataProvider.GetFilteredMarketDepth(Security security)
 		{
 			throw new NotSupportedException();
@@ -278,17 +263,9 @@ namespace SampleOptionQuoting
 			remove { }
 		}
 
-		Position IPositionProvider.GetPosition(Portfolio portfolio, Security security, string clientCode, string depoName)
+		Position IPositionProvider.GetPosition(Portfolio portfolio, Security security, string strategyId, Sides? side, string clientCode, string depoName, TPlusLimits? limit)
 		{
 			return _positions.FirstOrDefault(p => p.Security == security && p.Portfolio == portfolio);
-		}
-
-		void IPositionProvider.SubscribePositions(Security security, Portfolio portfolio, DateTimeOffset? from, DateTimeOffset? to, long? count, IMessageAdapter adapter)
-		{
-		}
-
-		void IPositionProvider.UnSubscribePositions(long originalTransactionId)
-		{
 		}
 
 		Portfolio IPortfolioProvider.LookupByPortfolioName(string name)

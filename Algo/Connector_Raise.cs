@@ -17,31 +17,42 @@ namespace StockSharp.Algo
 		public event Action<MyTrade> NewMyTrade;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<MyTrade>> NewMyTrades;
 
 		/// <inheritdoc />
+		[Obsolete("Use TickTradeReceived event.")]
 		public event Action<Trade> NewTrade;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Trade>> NewTrades;
 
 		/// <inheritdoc />
 		public event Action<Order> NewOrder;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Order>> NewOrders;
 
 		/// <inheritdoc />
 		public event Action<Order> OrderChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Order>> OrdersChanged;
+
+		/// <inheritdoc />
+		public event Action<long, Order> OrderEdited;
 
 		/// <inheritdoc />
 		public event Action<OrderFail> OrderRegisterFailed;
 
 		/// <inheritdoc />
 		public event Action<OrderFail> OrderCancelFailed;
+
+		/// <inheritdoc />
+		public event Action<long, OrderFail> OrderEditFailed;
 
 		/// <inheritdoc />
 		public event Action<long, Exception, DateTimeOffset> OrderStatusFailed2;
@@ -81,12 +92,15 @@ namespace StockSharp.Algo
 #pragma warning restore 67
 
 		/// <inheritdoc />
+		[Obsolete("Use SecurityReceived event.")]
 		public event Action<Security> NewSecurity;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<OrderFail>> OrdersRegisterFailed;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<OrderFail>> OrdersCancelFailed;
 
 		/// <inheritdoc />
@@ -105,70 +119,90 @@ namespace StockSharp.Algo
 		public event Action<long, Exception> OrderStatusFailed;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Security>> NewSecurities;
 
 		/// <inheritdoc />
+		[Obsolete("Use SecurityReceived event.")]
 		public event Action<Security> SecurityChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Security>> SecuritiesChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use PortfolioReceived event.")]
 		public event Action<Portfolio> NewPortfolio;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Portfolio>> NewPortfolios;
 
 		/// <inheritdoc />
+		[Obsolete("Use PortfolioReceived event.")]
 		public event Action<Portfolio> PortfolioChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Portfolio>> PortfoliosChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use PositionReceived event.")]
 		public event Action<Position> NewPosition;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Position>> NewPositions;
 
 		/// <inheritdoc />
+		[Obsolete("Use PositionReceived event.")]
 		public event Action<Position> PositionChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<Position>> PositionsChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use MarketDepthReceived event.")]
 		public event Action<MarketDepth> NewMarketDepth;
 
 		/// <inheritdoc />
+		[Obsolete("Use MarketDepthReceived event.")]
 		public event Action<MarketDepth> MarketDepthChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use MarketDepthReceived event.")]
 		public event Action<MarketDepth> FilteredMarketDepthChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<MarketDepth>> NewMarketDepths;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<MarketDepth>> MarketDepthsChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use OrderLogItemReceived event.")]
 		public event Action<OrderLogItem> NewOrderLogItem;
 
 		/// <inheritdoc />
+		[Obsolete("Use single item event overload.")]
 		public event Action<IEnumerable<OrderLogItem>> NewOrderLogItems;
 
 		/// <inheritdoc />
-		public event Action<TimeSpan> MarketTimeChanged;
-
-		/// <inheritdoc />
+		[Obsolete("Use NewsReceived event.")]
 		public event Action<News> NewNews;
 
 		/// <inheritdoc />
+		[Obsolete("Use NewsReceived event.")]
 		public event Action<News> NewsChanged;
 
 		/// <inheritdoc />
 		public event Action<Message> NewMessage;
+
+		/// <inheritdoc />
+		public event Action<TimeSpan> MarketTimeChanged;
 
 		/// <inheritdoc />
 		public event Action Connected;
@@ -288,6 +322,9 @@ namespace StockSharp.Algo
 		public event Action<Subscription, OrderFail> OrderCancelFailReceived;
 
 		/// <inheritdoc />
+		public event Action<Subscription, OrderFail> OrderEditFailReceived;
+
+		/// <inheritdoc />
 		public event Action<Subscription, Portfolio> PortfolioReceived;
 
 		/// <inheritdoc />
@@ -370,16 +407,33 @@ namespace StockSharp.Algo
 			OrdersChanged?.Invoke(new[] { order });
 		}
 
-		private void RaiseOrderRegisterFailed(OrderFail fail)
+		private void RaiseOrderEdited(long transactionId, Order order)
 		{
-			OrderRegisterFailed?.Invoke(fail);
+			this.AddDebugLog("Order {0} edited by transaction {1}.", order, transactionId);
+			OrderEdited?.Invoke(transactionId, order);
+		}
+
+		private void RaiseOrderFailed(string name, long transactionId, OrderFail fail, Action<long, OrderFail> failed)
+		{
+			this.AddErrorLog(() => name + Environment.NewLine + fail.Order + Environment.NewLine + fail.Error);
+			failed?.Invoke(transactionId, fail);
+		}
+
+		private void RaiseOrderRegisterFailed(long transactionId, OrderFail fail)
+		{
+			RaiseOrderFailed(nameof(OrderRegisterFailed), transactionId, fail, (id, f) => OrderRegisterFailed?.Invoke(f));
 			OrdersRegisterFailed?.Invoke(new[] { fail });
 		}
 
-		private void RaiseOrderCancelFailed(OrderFail fail)
+		private void RaiseOrderCancelFailed(long transactionId, OrderFail fail)
 		{
-			OrderCancelFailed?.Invoke(fail);
+			RaiseOrderFailed(nameof(OrderCancelFailed), transactionId, fail, (id, f) => OrderCancelFailed?.Invoke(f));
 			OrdersCancelFailed?.Invoke(new[] { fail });
+		}
+
+		private void RaiseOrderEditFailed(long transactionId, OrderFail fail)
+		{
+			RaiseOrderFailed(nameof(OrderEditFailed), transactionId, fail, OrderEditFailed);
 		}
 
 		private void RaiseMassOrderCanceled(long transactionId, DateTimeOffset time)
@@ -564,12 +618,10 @@ namespace StockSharp.Algo
 		/// <param name="exception">Data processing error.</param>
 		protected void RaiseError(Exception exception)
 		{
-			if (exception == null)
+			if (exception is null)
 				throw new ArgumentNullException(nameof(exception));
 
 			ErrorCount++;
-
-			this.AddErrorLog(exception);
 			Error?.Invoke(exception);
 		}
 
@@ -642,16 +694,16 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 
-			var msg = LocalizedStrings.SubscribedOk.Put(security?.Id, message.DataType2);
+			var msg = LocalizedStrings.SubscribedOk.Put(securityId, message.DataType2);
 
 			if (message.From != null && message.To != null)
 				msg += LocalizedStrings.Str691Params.Put(message.From.Value, message.To.Value);
 
 			this.AddDebugLog(msg + ".");
 
-			MarketDataSubscriptionSucceeded?.Invoke(security, message);
+			MarketDataSubscriptionSucceeded?.Invoke(TryGetSecurity(securityId), message);
 
 			RaiseSubscriptionStarted(subscription);
 		}
@@ -667,13 +719,15 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 			var error = reply.Error ?? new NotSupportedException(LocalizedStrings.SubscriptionNotSupported.Put(origin));
 
 			if (reply.IsNotSupported())
 				this.AddWarningLog(LocalizedStrings.SubscriptionNotSupported, origin);
 			else
-				this.AddErrorLog(LocalizedStrings.SubscribedError, security?.Id, origin.DataType2, error.Message);
+				this.AddErrorLog(LocalizedStrings.SubscribedError, securityId, origin.DataType2, error.Message);
+
+			var security = TryGetSecurity(securityId);
 
 			MarketDataSubscriptionFailed?.Invoke(security, origin, error);
 			MarketDataSubscriptionFailed2?.Invoke(security, origin, reply);
@@ -692,15 +746,15 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 
-			var msg = LocalizedStrings.UnSubscribedOk.Put(security?.Id,	message.DataType2);
+			var msg = LocalizedStrings.UnSubscribedOk.Put(securityId,	message.DataType2);
 
 			if (message.From != null && message.To != null)
 				msg += LocalizedStrings.Str691Params.Put(message.From.Value, message.To.Value);
 
 			this.AddDebugLog(msg + ".");
-			MarketDataUnSubscriptionSucceeded?.Invoke(security, message);
+			MarketDataUnSubscriptionSucceeded?.Invoke(TryGetSecurity(securityId), message);
 
 			RaiseSubscriptionStopped(subscription, null);
 
@@ -719,10 +773,12 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 			var error = reply.Error ?? new NotSupportedException();
 
-			this.AddErrorLog(LocalizedStrings.UnSubscribedError, security?.Id, origin.DataType2, error.Message);
+			this.AddErrorLog(LocalizedStrings.UnSubscribedError, securityId, origin.DataType2, error.Message);
+
+			var security = TryGetSecurity(securityId);
 			MarketDataUnSubscriptionFailed?.Invoke(security, origin, error);
 			MarketDataUnSubscriptionFailed2?.Invoke(security, origin, reply);
 
@@ -737,10 +793,10 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 
-			this.AddDebugLog(LocalizedStrings.SubscriptionFinished, security?.Id, message);
-			MarketDataSubscriptionFinished?.Invoke(security, message);
+			this.AddDebugLog(LocalizedStrings.SubscriptionFinished, securityId, message);
+			MarketDataSubscriptionFinished?.Invoke(TryGetSecurity(securityId), message);
 
 			RaiseSubscriptionStopped(subscription, null);
 
@@ -759,10 +815,10 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 
-			this.AddErrorLog(LocalizedStrings.SubscriptionUnexpectedCancelled, security?.Id, message.DataType2, error.Message);
-			MarketDataUnexpectedCancelled?.Invoke(security, message, error);
+			this.AddErrorLog(LocalizedStrings.SubscriptionUnexpectedCancelled, securityId, message.DataType2, error.Message);
+			MarketDataUnexpectedCancelled?.Invoke(TryGetSecurity(securityId), message, error);
 
 			RaiseSubscriptionStopped(subscription, error);
 
@@ -810,12 +866,12 @@ namespace StockSharp.Algo
 			if (subscription == null)
 				throw new ArgumentNullException(nameof(subscription));
 
-			var security = subscription.Security;
+			var securityId = subscription.SecurityId;
 			
-			this.AddDebugLog(LocalizedStrings.SubscriptionOnline, security?.Id, subscription.SubscriptionMessage);
+			this.AddDebugLog(LocalizedStrings.SubscriptionOnline, securityId, subscription.SubscriptionMessage);
 
 			if (subscription.SubscriptionMessage is MarketDataMessage mdMsg)
-				MarketDataSubscriptionOnline?.Invoke(security, mdMsg);
+				MarketDataSubscriptionOnline?.Invoke(TryGetSecurity(securityId), mdMsg);
 
 			RaiseSubscriptionOnline(subscription);
 		}
@@ -884,15 +940,26 @@ namespace StockSharp.Algo
 
 		private bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt)
 		{
-			return RaiseReceived(entity, _subscriptionManager.GetSubscriptions(message), evt);
+			return RaiseReceived(entity, message, evt, out _);
+		}
+
+		private bool? RaiseReceived<TEntity>(TEntity entity, ISubscriptionIdMessage message, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
+		{
+			return RaiseReceived(entity, _subscriptionManager.GetSubscriptions(message), evt, out anyCanOnline);
 		}
 
 		private bool? RaiseReceived<TEntity>(TEntity entity, IEnumerable<Subscription> subscriptions, Action<Subscription, TEntity> evt)
+		{
+			return RaiseReceived(entity, subscriptions, evt, out _);
+		}
+
+		private bool? RaiseReceived<TEntity>(TEntity entity, IEnumerable<Subscription> subscriptions, Action<Subscription, TEntity> evt, out bool? anyCanOnline)
 		{
 			if (subscriptions is null)
 				throw new ArgumentNullException(nameof(subscriptions));
 
 			bool? anyOnline = null;
+			anyCanOnline = null;
 
 			foreach (var subscription in subscriptions)
 			{
@@ -900,6 +967,8 @@ namespace StockSharp.Algo
 
 				if (subscription.State == SubscriptionStates.Online)
 					anyOnline = true;
+				else if (subscription.State == SubscriptionStates.Active)
+					anyCanOnline = subscription.SubscriptionMessage.To is null;
 
 				evt?.Invoke(subscription, entity);
 			}

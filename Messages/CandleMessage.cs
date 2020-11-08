@@ -61,7 +61,8 @@ namespace StockSharp.Messages
 	/// </summary>
 	[System.Runtime.Serialization.DataContract]
 	[Serializable]
-	public abstract class CandleMessage : Message, ISubscriptionIdMessage, IServerTimeMessage, ISecurityIdMessage
+	public abstract class CandleMessage : Message,
+		ISubscriptionIdMessage, IServerTimeMessage, ISecurityIdMessage, IGeneratedMessage, ISeqNumMessage
 	{
 		/// <inheritdoc />
 		[DataMember]
@@ -244,23 +245,6 @@ namespace StockSharp.Messages
 		[XmlIgnore]
 		public IEnumerable<CandlePriceLevel> PriceLevels { get; set; }
 
-		private CandleMessageVolumeProfile _volumeProfile;
-
-		/// <summary>
-		/// Volume profile.
-		/// </summary>
-		[Ignore]
-		[XmlIgnore]
-		public CandleMessageVolumeProfile VolumeProfile
-		{
-			get => _volumeProfile;
-			set
-			{
-				_volumeProfile = value;
-				PriceLevels = value?.PriceLevels;
-			}
-		}
-
 		/// <summary>
 		/// Candle arg.
 		/// </summary>
@@ -298,6 +282,14 @@ namespace StockSharp.Messages
 		[XmlIgnore]
 		public long[] SubscriptionIds { get; set; }
 
+		/// <inheritdoc />
+		[DataMember]
+		public DataType BuildFrom { get; set; }
+
+		/// <inheritdoc />
+		[DataMember]
+		public long SeqNum { get; set; }
+
 		/// <summary>
 		/// Copy parameters.
 		/// </summary>
@@ -330,8 +322,10 @@ namespace StockSharp.Messages
 			copy.DownTicks = DownTicks;
 			copy.UpTicks = UpTicks;
 			copy.TotalTicks = TotalTicks;
-			copy.PriceLevels = PriceLevels?.Select(l => l.Clone()).ToArray();
+			copy.PriceLevels = PriceLevels?/*.Select(l => l.Clone())*/.ToArray();
 			copy.State = State;
+			copy.BuildFrom = BuildFrom;
+			copy.SeqNum = SeqNum;
 
 			return copy;
 		}
@@ -339,10 +333,19 @@ namespace StockSharp.Messages
 		/// <inheritdoc />
 		public override string ToString()
 		{
-			return $"{Type},Sec={SecurityId},A={Arg},T={OpenTime:yyyy/MM/dd HH:mm:ss.fff},O={OpenPrice},H={HighPrice},L={LowPrice},C={ClosePrice},V={TotalVolume},S={State},TransId={OriginalTransactionId}";
+			var str = $"{Type},Sec={SecurityId},A={Arg},T={OpenTime:yyyy/MM/dd HH:mm:ss.fff},O={OpenPrice},H={HighPrice},L={LowPrice},C={ClosePrice},V={TotalVolume},S={State},TransId={OriginalTransactionId}";
+
+			if (SeqNum != default)
+				str += $",SQ={SeqNum}";
+
+			return str;
 		}
 
-		DateTimeOffset IServerTimeMessage.ServerTime => OpenTime;
+		DateTimeOffset IServerTimeMessage.ServerTime
+		{
+			get => OpenTime;
+			set => OpenTime = value;
+		}
 	}
 
 	/// <summary>
@@ -499,11 +502,17 @@ namespace StockSharp.Messages
 		{
 		}
 
+		private Unit _priceRange = new Unit();
+
 		/// <summary>
 		/// Range of price.
 		/// </summary>
 		[DataMember]
-		public Unit PriceRange { get; set; }
+		public Unit PriceRange
+		{
+			get => _priceRange;
+			set => _priceRange = value ?? throw new ArgumentNullException(nameof(value));
+		}
 
 		/// <summary>
 		/// Create a copy of <see cref="RangeCandleMessage"/>.
@@ -528,26 +537,6 @@ namespace StockSharp.Messages
 		/// <inheritdoc />
 		public override object CloneArg() => PriceRange.Clone();
 	}
-
-	///// <summary>
-	///// Symbol types.
-	///// </summary>
-	//[System.Runtime.Serialization.DataContract]
-	//[Serializable]
-	//public enum PnFTypes
-	//{
-	//	/// <summary>
-	//	/// X (price up).
-	//	/// </summary>
-	//	[EnumMember]
-	//	X,
-
-	//	/// <summary>
-	//	/// 0 (price down).
-	//	/// </summary>
-	//	[EnumMember]
-	//	O,
-	//}
 
 	/// <summary>
 	/// Point in figure (X0) candle arg.
@@ -641,17 +630,17 @@ namespace StockSharp.Messages
 		{
 		}
 
+		private PnFArg _pnFArg = new PnFArg();
+
 		/// <summary>
 		/// Value of arguments.
 		/// </summary>
 		[DataMember]
-		public PnFArg PnFArg { get; set; }
-
-		///// <summary>
-		///// Type of symbols.
-		///// </summary>
-		//[DataMember]
-		//public PnFTypes PnFType { get; set; }
+		public PnFArg PnFArg
+		{
+			get => _pnFArg;
+			set => _pnFArg = value ?? throw new ArgumentNullException(nameof(value));
+		}
 
 		/// <summary>
 		/// Create a copy of <see cref="PnFCandleMessage"/>.
@@ -694,11 +683,17 @@ namespace StockSharp.Messages
 		{
 		}
 
+		private Unit _boxSize = new Unit();
+
 		/// <summary>
 		/// Possible price change range.
 		/// </summary>
 		[DataMember]
-		public Unit BoxSize { get; set; }
+		public Unit BoxSize
+		{
+			get => _boxSize;
+			set => _boxSize = value ?? throw new ArgumentNullException(nameof(value));
+		}
 
 		/// <summary>
 		/// Create a copy of <see cref="RenkoCandleMessage"/>.

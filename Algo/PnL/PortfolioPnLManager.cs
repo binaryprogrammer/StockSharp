@@ -167,6 +167,9 @@ namespace StockSharp.Algo.PnL
 				{
 					var quoteMsg = (QuoteChangeMessage)message;
 
+					if (quoteMsg.State != null)
+						break;
+
 					var queue = _securityPnLs.TryGetValue(quoteMsg.SecurityId);
 
 					if (queue == null)
@@ -180,7 +183,7 @@ namespace StockSharp.Algo.PnL
 				{
 					var posMsg = (PositionChangeMessage)message;
 
-					var leverage = posMsg.Changes.TryGetValue(PositionChangeTypes.Leverage).To<decimal?>();
+					var leverage = posMsg.TryGetDecimal(PositionChangeTypes.Leverage);
 					if (leverage != null)
 					{
 						if (posMsg.IsMoney())

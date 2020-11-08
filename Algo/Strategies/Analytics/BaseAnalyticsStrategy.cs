@@ -128,6 +128,70 @@ namespace StockSharp.Algo.Strategies.Analytics
 			set => base.Portfolio = value;
 		}
 
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override decimal Volume
+		{
+			get => base.Volume;
+			set => base.Volume = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override StrategyCommentModes CommentMode
+		{
+			get => base.CommentMode;
+			set => base.CommentMode = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override bool AllowTrading
+		{
+			get => base.AllowTrading;
+			set => base.AllowTrading = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override bool UnsubscribeOnStop
+		{
+			get => base.UnsubscribeOnStop;
+			set => base.UnsubscribeOnStop = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override int MaxOrderRegisterErrorCount
+		{
+			get => base.MaxOrderRegisterErrorCount;
+			set => base.MaxOrderRegisterErrorCount = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override bool WaitRulesOnStop
+		{
+			get => base.WaitRulesOnStop;
+			set => base.WaitRulesOnStop = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override int MaxRegisterCount
+		{
+			get => base.MaxRegisterCount;
+			set => base.MaxRegisterCount = value;
+		}
+
+		/// <inheritdoc />
+		[Browsable(false)]
+		public override TimeSpan RegisterInterval
+		{
+			get => base.RegisterInterval;
+			set => base.RegisterInterval = value;
+		}
+
 		/// <summary>
 		/// Initialize <see cref="BaseAnalyticsStrategy"/>.
 		/// </summary>
@@ -142,9 +206,6 @@ namespace StockSharp.Algo.Strategies.Analytics
 		protected override void ProcessCancelActiveOrders()
 		{
 		}
-
-		/// <inheritdoc />
-		public override DateTimeOffset CurrentTime => TimeHelper.NowWithOffset;
 
 		/// <summary>
 		/// Result panel.

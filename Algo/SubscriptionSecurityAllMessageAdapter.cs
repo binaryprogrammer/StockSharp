@@ -28,13 +28,15 @@
 
 		private class ChildSubscription : BaseSubscription
 		{
-			public ChildSubscription(MarketDataMessage origin)
+			public ChildSubscription(ParentSubscription parent, MarketDataMessage origin)
 				: base(origin)
 			{
+				Parent = parent ?? throw new ArgumentNullException(nameof(parent));
 			}
 
+			public ParentSubscription Parent { get; }
 			public SubscriptionStates State { get; set; } = SubscriptionStates.Stopped;
-			public IList<Message> Suspended { get; } = new List<Message>();
+			public List<ISubscriptionIdMessage> Suspended { get; } = new List<ISubscriptionIdMessage>();
 			public CachedSynchronizedDictionary<long, MarketDataMessage> Subscribers { get; } = new CachedSynchronizedDictionary<long, MarketDataMessage>();
 		}
 
@@ -45,14 +47,19 @@
 			{
 			}
 
-			public IDictionary<SecurityId, ChildSubscription> Child { get; } = new Dictionary<SecurityId, ChildSubscription>();
+			public CachedSynchronizedPairSet<long, MarketDataMessage> Alls = new CachedSynchronizedPairSet<long, MarketDataMessage>();
+			public SynchronizedDictionary<SecurityId, CachedSynchronizedSet<long>> NonAlls = new SynchronizedDictionary<SecurityId, CachedSynchronizedSet<long>>();
+			public Dictionary<SecurityId, ChildSubscription> Child { get; } = new Dictionary<SecurityId, ChildSubscription>();
 		}
 
 		private readonly SyncObject _sync = new SyncObject();
 
-		private readonly Dictionary<long, RefPair<long, SubscriptionStates>> _allChilds = new Dictionary<long, RefPair<long, SubscriptionStates>>();
+		private readonly Dictionary<long, RefPair<long, SubscriptionStates>> _pendingLoopbacks = new Dictionary<long, RefPair<long, SubscriptionStates>>();
 		private readonly Dictionary<long, ParentSubscription> _parents = new Dictionary<long, ParentSubscription>();
-		
+		private readonly Dictionary<long, ParentSubscription> _unsubscribes = new Dictionary<long, ParentSubscription>();
+		private readonly Dictionary<long, Tuple<ParentSubscription, MarketDataMessage>> _requests = new Dictionary<long, Tuple<ParentSubscription, MarketDataMessage>>();
+		private readonly List<ChildSubscription> _toFlush = new List<ChildSubscription>();
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="SubscriptionSecurityAllMessageAdapter"/>.
 		/// </summary>
@@ -66,8 +73,11 @@
 		{
 			lock (_sync)
 			{
+				_pendingLoopbacks.Clear();
 				_parents.Clear();
-				_allChilds.Clear();
+				_unsubscribes.Clear();
+				_requests.Clear();
+				_toFlush.Clear();
 			}
 		}
 
@@ -87,12 +97,10 @@
 					if (mdMsg.IsSubscribe)
 					{
 						var transId = mdMsg.TransactionId;
-						
-						Message[] suspended = null;
 
 						lock (_sync)
 						{
-							if (_allChilds.TryGetValue(transId, out var tuple))
+							if (_pendingLoopbacks.TryGetAndRemove(transId, out var tuple))
 							{
 								if (tuple.Second != SubscriptionStates.Stopped)
 								{
@@ -102,8 +110,6 @@
 										{
 											OriginalTransactionId = transId,
 										});
-
-										return true;
 									}
 									else
 									{
@@ -117,95 +123,134 @@
 									return true;
 								}
 
-								var child = _parents[tuple.First].Child[mdMsg.SecurityId];
-								child.State = SubscriptionStates.Active;
-								suspended = child.Suspended.CopyAndClear();
+								var parent = _parents[tuple.First];
+								var child = parent.Child[mdMsg.SecurityId];
+								child.State = SubscriptionStates.Online;
+
+								if (child.Suspended.Count > 0)
+									_toFlush.Add(child);
 
 								this.AddDebugLog("New ALL map (active): {0}/{1} TrId={2}", child.Origin.SecurityId, child.Origin.DataType2, mdMsg.TransactionId);
+								
+								_requests.Add(transId, Tuple.Create(parent, mdMsg.TypedClone()));
+
+								// for child subscriptions make online (or finished) immediatelly
+								RaiseNewOutMessage(mdMsg.CreateResponse());
+								//RaiseNewOutMessage(mdMsg.CreateResult());
+								return true;
 							}
 							else
 							{
 								if (!IsSecurityRequired(mdMsg.DataType2) || mdMsg.SecurityId == default)
 								{
-									var existing = _parents.FirstOrDefault(p => p.Value.Origin.DataType2 == mdMsg.DataType2);
+									mdMsg = mdMsg.TypedClone();
+									
+									var parent = _parents.FirstOrDefault(p => p.Value.Origin.DataType2 == mdMsg.DataType2).Value;
 
-									if (existing.Value == null)
+									void AddSubscription()
 									{
-										_parents.Add(transId, new ParentSubscription(mdMsg.TypedClone()));
-
-										// do not specify security cause adapter doesn't require it
-										mdMsg.SecurityId = default;
-									}
-									else
-									{
-										var childs = existing.Value.Child;
-
-										if (mdMsg.SecurityId != default)
+										if (mdMsg.SecurityId == default)
 										{
-											var child = childs.SafeAdd(mdMsg.SecurityId, key => new ChildSubscription(mdMsg.TypedClone()));
-											child.Subscribers.Add(transId, mdMsg.TypedClone());
+											// first ALL is initiator
+											parent.Alls.Add(transId, mdMsg);
 										}
 										else
 										{
-											foreach (var pair in childs)
-												pair.Value.Subscribers.Add(transId, mdMsg.TypedClone());
+											parent.NonAlls.SafeAdd(mdMsg.SecurityId).Add(transId);
 										}
 
-										RaiseNewOutMessage(new SubscriptionResponseMessage { OriginalTransactionId = transId });
+										_requests.Add(transId, Tuple.Create(parent, mdMsg));
+									}
+
+									if (parent == null)
+									{
+										parent = new ParentSubscription(mdMsg);
+										_parents.Add(transId, parent);
+
+										AddSubscription();
+
+										// do not specify security cause adapter doesn't require it
+										mdMsg = mdMsg.TypedClone();
+										Extensions.AllSecurity.CopyEx(mdMsg, false);
+										message = mdMsg;
+
+										this.AddInfoLog("Sec ALL {0} subscribing.", transId);
+									}
+									else
+									{
+										AddSubscription();
+
+										// for child subscriptions make online (or finished) immediatelly
+										RaiseNewOutMessage(mdMsg.CreateResponse());
+										//RaiseNewOutMessage(mdMsg.CreateResult());
 										return true;
 									}
 								}
 							}
 						}
-
-						if (suspended != null)
-						{
-							RaiseNewOutMessage(new SubscriptionResponseMessage { OriginalTransactionId = transId });
-
-							this.AddDebugLog("Flush {0} suspended: {1}/{2}/{3}.", suspended.Length, mdMsg.SecurityId, mdMsg.DataType2, mdMsg.TransactionId);
-
-							foreach (var msg in suspended)
-								RaiseNewOutMessage(msg);
-
-							return true;
-						}
 					}
 					else
 					{
-						var childIds = ArrayHelper.Empty<long>();
+						var originId = mdMsg.OriginalTransactionId;
 
 						lock (_sync)
 						{
-							if (_allChilds.TryGetAndRemove(mdMsg.OriginalTransactionId, out var tuple))
+							var found = false;
+
+							if (!_requests.TryGetAndRemove(originId, out var tuple))
+								break;
+
+							//this.AddDebugLog("Sec ALL child {0} unsubscribe.", originId);
+
+							var parent = tuple.Item1;
+							var request = tuple.Item2;
+							var secId = request.SecurityId;
+							var transId = request.TransactionId;
+
+							if (parent.Alls.RemoveByValue(request))
+								found = true;
+							else if (parent.NonAlls.TryGetValue(secId, out var set) && set.Remove(transId))
 							{
-								var childs = _parents[tuple.First].Child;
+								if (set.Count == 0)
+									parent.NonAlls.Remove(secId);
 
-								var childSubscription = childs.FirstOrDefault(p => p.Value.Origin.TransactionId == mdMsg.OriginalTransactionId);
-								childs.Remove(childSubscription.Key);
-
-								Exception error = null;
-
-								if (childSubscription.Value == null)
-									error = new InvalidOperationException(LocalizedStrings.SubscriptionNonExist.Put(mdMsg.OriginalTransactionId));
-								else if (!tuple.Second.IsActive())
-									error = new InvalidOperationException(LocalizedStrings.SubscriptionInvalidState.Put(mdMsg.OriginalTransactionId, tuple.Second));
-
-								RaiseNewOutMessage(new SubscriptionResponseMessage
+								found = true;
+							}
+							else
+							{
+								if (parent.Child.TryGetValue(secId, out var child))
 								{
-									OriginalTransactionId = mdMsg.OriginalTransactionId,
-									Error = error,
-								});
+									if (child.Subscribers.Remove(transId))
+									{
+										found = true;
 
-								return true;
+										if (child.Subscribers.Count == 0)
+											parent.Child.Remove(secId);
+									}
+								}
 							}
 
-							if (_parents.TryGetAndRemove(mdMsg.OriginalTransactionId, out var tuple2))
-								childIds = tuple2.Child.Values.Select(s => s.Origin.TransactionId).ToArray();
-						}
+							if (found)
+							{
+								if (parent.Alls.Count == 0 && parent.NonAlls.Count == 0 && parent.Child.Count == 0)
+								{
+									// last unsubscribe is not initial subscription
+									if (parent.Origin.TransactionId != originId)
+									{
+										mdMsg = mdMsg.TypedClone();
+										mdMsg.OriginalTransactionId = parent.Origin.TransactionId;
+											
+										message = mdMsg;
+									}
 
-						foreach (var id in childIds)
-						{
-							RaiseNewOutMessage(new SubscriptionFinishedMessage { OriginalTransactionId = id });
+									_unsubscribes.Add(mdMsg.TransactionId, parent);
+										
+									break;
+								}
+							}
+
+							RaiseNewOutMessage(mdMsg.CreateResponse(found ? null : new InvalidOperationException(LocalizedStrings.SubscriptionNonExist.Put(originId))));
+							return true;
 						}
 					}
 
@@ -232,20 +277,23 @@
 				case MessageTypes.SubscriptionResponse:
 				{
 					var responseMsg = (SubscriptionResponseMessage)message;
+					var originId = responseMsg.OriginalTransactionId;
 
 					if (responseMsg.Error != null)
 					{
 						lock (_sync)
 						{
-							if (_parents.TryGetAndRemove(responseMsg.OriginalTransactionId, out var parent))
+							if (_parents.TryGetAndRemove(originId, out var parent))
 							{
+								this.AddErrorLog("Sec ALL {0} error.", parent.Origin.TransactionId);
+							
 								extra = new List<Message>();
 
 								foreach (var child in parent.Child.Values)
 								{
 									var childId = child.Origin.TransactionId;
 
-									if (_allChilds.TryGetValue(childId, out var tuple) && tuple.Second == SubscriptionStates.Stopped)
+									if (_pendingLoopbacks.TryGetValue(childId, out var tuple) && tuple.Second == SubscriptionStates.Stopped)
 									{
 										// loopback subscription not yet come, so will reply later
 										tuple.Second = SubscriptionStates.Error;
@@ -254,6 +302,19 @@
 										extra.Add(new SubscriptionResponseMessage { OriginalTransactionId = childId, Error = responseMsg.Error });
 								}
 							}
+							else if (_unsubscribes.TryGetAndRemove(originId, out parent))
+							{
+								this.AddErrorLog("Sec ALL {0} unsubscribe error.", parent.Origin.TransactionId);
+								_parents.Remove(parent.Origin.TransactionId);
+							}
+						}
+					}
+					else
+					{
+						if (_unsubscribes.TryGetAndRemove(originId, out var parent))
+						{
+							this.AddInfoLog("Sec ALL {0} unsubscribed.", parent.Origin.TransactionId);
+							_parents.Remove(parent.Origin.TransactionId);
 						}
 					}
 
@@ -273,7 +334,7 @@
 							{
 								var childId = child.Origin.TransactionId;
 
-								if (_allChilds.TryGetValue(childId, out var tuple) && tuple.Second == SubscriptionStates.Stopped)
+								if (_pendingLoopbacks.TryGetValue(childId, out var tuple) && tuple.Second == SubscriptionStates.Stopped)
 								{
 									// loopback subscription not yet come, so will reply later
 									tuple.Second = SubscriptionStates.Finished;
@@ -288,69 +349,11 @@
 				}
 				default:
 				{
-					if (message is ISubscriptionIdMessage subscrMsg && message is ISecurityIdMessage secIdMsg)
-					{
-						SubscriptionSecurityAllMessage allMsg = null;
+					var allMsg = CheckSubscription(ref message);
 
-						bool CheckSubscription(long parentId)
-						{
-							lock (_sync)
-							{
-								if (_parents.TryGetValue(parentId, out var parent))
-								{
-									// parent subscription has security id (not null)
-									if (parent.Origin.SecurityId == secIdMsg.SecurityId)
-										return true;
-
-									if (!parent.Child.TryGetValue(secIdMsg.SecurityId, out var child))
-									{
-										allMsg = new SubscriptionSecurityAllMessage();
-
-										parent.Origin.CopyTo(allMsg);
-
-										allMsg.ParentTransactionId = parentId;
-										allMsg.TransactionId = TransactionIdGenerator.GetNextId();
-										allMsg.SecurityId = secIdMsg.SecurityId;
-
-										child = new ChildSubscription(allMsg.TypedClone());
-										child.Subscribers.Add(allMsg.TransactionId, child.Origin);
-
-										parent.Child.Add(secIdMsg.SecurityId, child);
-
-										allMsg.LoopBack(this, MessageBackModes.Chain);
-										_allChilds.Add(allMsg.TransactionId, RefTuple.Create(parentId, SubscriptionStates.Stopped));
-
-										this.AddDebugLog("New ALL map: {0}/{1} TrId={2}-{3}", child.Origin.SecurityId, child.Origin.DataType2, allMsg.ParentTransactionId, allMsg.TransactionId);
-									}
-
-									//var subscriptionIds = subscrMsg.GetSubscriptionIds().Where(i => i != parentId).Concat(child.Subscribers.Cache);
-									subscrMsg.SetSubscriptionIds(child.Subscribers.CachedKeys);
-
-									if (!child.State.IsActive())
-									{
-										child.Suspended.Add(message);
-										message = null;
-
-										this.AddDebugLog("ALL suspended: {0}/{1}, cnt={2}", child.Origin.SecurityId, child.Origin.DataType2, child.Suspended.Count);
-									}
-
-									return true;
-								}
-							}
-
-							return false;
-						}
-
-						foreach (var id in subscrMsg.GetSubscriptionIds())
-						{
-							if (CheckSubscription(id))
-								break;
-						}
-
-						if (allMsg != null)
-							base.OnInnerAdapterNewOutMessage(allMsg);
-					}
-
+					if (allMsg != null)
+						base.OnInnerAdapterNewOutMessage(allMsg);
+					
 					break;
 				}
 			}
@@ -363,6 +366,106 @@
 				foreach (var m in extra)
 					base.OnInnerAdapterNewOutMessage(m);
 			}
+		}
+
+		private void ApplySubscriptionIds(ISubscriptionIdMessage subscrMsg, ParentSubscription parent, long[] newIds)
+		{
+			var ids = subscrMsg.GetSubscriptionIds();
+			var initialId = parent.Origin.TransactionId;
+			newIds = newIds.Concat(parent.Alls.CachedKeys);
+
+			if (subscrMsg is ISecurityIdMessage secIdMsg && parent.NonAlls.TryGetValue(secIdMsg.SecurityId, out var set))
+			{
+				newIds = newIds.Concat(set.Cache);
+			}
+
+			if (ids.Length == 1 && ids[0] == initialId)
+				subscrMsg.SetSubscriptionIds(newIds);
+			else
+				subscrMsg.SetSubscriptionIds(ids.Where(id => id != initialId).Concat(newIds).ToArray());
+		}
+
+		private void ApplySubscriptionIds(ISubscriptionIdMessage subscrMsg, ChildSubscription child)
+		{
+			ApplySubscriptionIds(subscrMsg, child.Parent, child.Subscribers.CachedKeys);
+		}
+
+		private SubscriptionSecurityAllMessage CheckSubscription(ref Message message)
+		{
+			lock (_sync)
+			{
+				if (_toFlush.Count > 0)
+				{
+					var childs = _toFlush.CopyAndClear();
+					
+					foreach (var child in childs)
+					{
+						this.AddDebugLog("ALL flush: {0}/{1}, cnt={2}", child.Origin.SecurityId, child.Origin.DataType2, child.Suspended.Count);
+
+						foreach (var msg in child.Suspended.CopyAndClear())
+						{
+							ApplySubscriptionIds(msg, child);
+							RaiseNewOutMessage((Message)msg);
+						}
+					}
+				}
+
+				if (_parents.Count == 0)
+					return null;
+
+				if (message is ISubscriptionIdMessage subscrMsg && message is ISecurityIdMessage secIdMsg)
+				{
+					foreach (var parentId in subscrMsg.GetSubscriptionIds())
+					{
+						if (_parents.TryGetValue(parentId, out var parent))
+						{
+							// parent subscription has security id (not null)
+							if (parent.Origin.SecurityId == secIdMsg.SecurityId)
+							{
+								ApplySubscriptionIds(subscrMsg, parent, new[] { parent.Origin.TransactionId });
+								return null;
+							}
+
+							SubscriptionSecurityAllMessage allMsg = null;
+
+							if (!parent.Child.TryGetValue(secIdMsg.SecurityId, out var child))
+							{
+								allMsg = new SubscriptionSecurityAllMessage();
+
+								parent.Origin.CopyTo(allMsg);
+
+								allMsg.ParentTransactionId = parentId;
+								allMsg.TransactionId = TransactionIdGenerator.GetNextId();
+								allMsg.SecurityId = secIdMsg.SecurityId;
+
+								child = new ChildSubscription(parent, allMsg.TypedClone());
+								child.Subscribers.Add(allMsg.TransactionId, child.Origin);
+
+								parent.Child.Add(secIdMsg.SecurityId, child);
+
+								allMsg.LoopBack(this, MessageBackModes.Chain);
+								_pendingLoopbacks.Add(allMsg.TransactionId, RefTuple.Create(parentId, SubscriptionStates.Stopped));
+
+								this.AddDebugLog("New ALL map: {0}/{1} TrId={2}-{3}", child.Origin.SecurityId, child.Origin.DataType2, allMsg.ParentTransactionId, allMsg.TransactionId);
+							}
+
+							if (!child.State.IsActive())
+							{
+								child.Suspended.Add(subscrMsg);
+								message = null;
+
+								this.AddDebugLog("ALL suspended: {0}/{1}, cnt={2}", child.Origin.SecurityId, child.Origin.DataType2, child.Suspended.Count);
+							}
+							else
+								ApplySubscriptionIds(subscrMsg, child);
+
+							return allMsg;
+						}
+					}
+				}
+			}
+
+			return null;
 		}
 
 		/// <summary>

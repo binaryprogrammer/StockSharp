@@ -38,13 +38,16 @@
 				{
 					var mdMsg = (MarketDataMessage)message;
 
-					if (mdMsg.SecurityId == default)
-						break;
-
-					if (mdMsg.DataType2 == DataType.MarketDepth)
+					if (mdMsg.IsSubscribe)
 					{
-						if (mdMsg.IsSubscribe)
+						if (mdMsg.DataType2 == DataType.MarketDepth)
 						{
+							if (mdMsg.SecurityId == default)
+								break;
+
+							if (mdMsg.DoNotBuildOrderBookInrement)
+								break;
+
 							if (mdMsg.MaxDepth != null)
 							{
 								var actualDepth = mdMsg.MaxDepth.Value;
@@ -62,10 +65,10 @@
 								}
 							}
 						}
-						else
-						{
-							RemoveSubscription(mdMsg.OriginalTransactionId);
-						}
+					}
+					else
+					{
+						RemoveSubscription(mdMsg.OriginalTransactionId);
 					}
 
 					break;
@@ -104,7 +107,13 @@
 				}
 				case MessageTypes.QuoteChange:
 				{
+					if (_depths.Count == 0)
+						break;
+
 					var quoteMsg = (QuoteChangeMessage)message;
+
+					if (quoteMsg.State != null)
+						break;
 
 					foreach (var group in quoteMsg.GetSubscriptionIds().GroupBy(_depths.TryGetValue2))
 					{
@@ -157,9 +166,6 @@
 		/// Create a copy of <see cref="OrderBookTruncateMessageAdapter"/>.
 		/// </summary>
 		/// <returns>Copy.</returns>
-		public override IMessageChannel Clone()
-		{
-			return new OrderBookTruncateMessageAdapter(InnerAdapter.TypedClone());
-		}
+		public override IMessageChannel Clone() => new OrderBookTruncateMessageAdapter(InnerAdapter.TypedClone());
 	}
 }

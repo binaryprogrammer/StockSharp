@@ -16,7 +16,6 @@ Copyright 2010 by StockSharp, LLC
 namespace StockSharp.Algo
 {
 	using System;
-	using System.Collections;
 	using System.Collections.Generic;
 	using System.Globalization;
 	using System.Linq;
@@ -27,34 +26,12 @@ namespace StockSharp.Algo
 
 	using MoreLinq;
 
-	using StockSharp.Algo.Positions;
 	using StockSharp.Algo.Storages;
 	using StockSharp.Algo.Testing;
 	using StockSharp.BusinessEntities;
 	using StockSharp.Logging;
 	using StockSharp.Messages;
 	using StockSharp.Localization;
-
-	/// <summary>
-	/// Price rounding rules.
-	/// </summary>
-	public enum ShrinkRules
-	{
-		/// <summary>
-		/// Automatically to determine rounding to lesser or to bigger value.
-		/// </summary>
-		Auto,
-
-		/// <summary>
-		/// To round to lesser value.
-		/// </summary>
-		Less,
-
-		/// <summary>
-		/// To round to bigger value.
-		/// </summary>
-		More,
-	}
 
 	/// <summary>
 	/// The auxiliary class for provision of various algorithmic functionalities.
@@ -111,88 +88,138 @@ namespace StockSharp.Algo
 		/// <param name="logs">Logs.</param>
 		public static void ApplyNewState(this Order order, OrderStates state, ILogReceiver logs = null)
 		{
-			if (order is null)
-				throw new ArgumentNullException(nameof(order));
-
-			if (!_stateChangePossibilities[(int)order.State][(int)state] && logs != null)
-				logs.AddWarningLog($"Order {order.TransactionId} invalid state change: {order.State} -> {state}");
-
+			((OrderStates?)order.State).VerifyOrderState(state, order.TransactionId, logs);
 			order.State = state;
 		}
 
 		/// <summary>
-		/// To filter the order book from own orders.
+		/// Check the possibility <see cref="Order.State"/> change.
 		/// </summary>
-		/// <param name="quotes">The initial order book to be filtered.</param>
-		/// <param name="ownOrders">Active orders for this instrument.</param>
-		/// <param name="orders">Orders to be ignored.</param>
-		/// <returns>The filtered order book.</returns>
-		public static IEnumerable<Quote> GetFilteredQuotes(this IEnumerable<Quote> quotes, IEnumerable<Order> ownOrders, IEnumerable<Order> orders)
+		/// <param name="currState">Current order's state.</param>
+		/// <param name="newState">New state.</param>
+		/// <param name="transactionId">Transaction id.</param>
+		/// <param name="logs">Logs.</param>
+		/// <returns>Check result.</returns>
+		public static bool VerifyOrderState(this OrderStates? currState, OrderStates newState, long transactionId, ILogReceiver logs)
 		{
-			if (quotes == null)
-				throw new ArgumentNullException(nameof(quotes));
+			var isInvalid = currState != null && !_stateChangePossibilities[(int)currState.Value][(int)newState];
 
-			if (ownOrders == null)
-				throw new ArgumentNullException(nameof(ownOrders));
+			if (isInvalid)
+				logs?.AddWarningLog($"Order {transactionId} invalid state change: {currState} -> {newState}");
 
-			if (orders == null)
-				throw new ArgumentNullException(nameof(orders));
+			return !isInvalid;
+		}
 
-			var dict = new Dictionary<Tuple<Sides, decimal>, HashSet<Order>>();
+		/// <summary>
+		/// Convert order changes to final snapshot.
+		/// </summary>
+		/// <param name="diffs">Changes.</param>
+		/// <param name="transactionId">Transaction ID.</param>
+		/// <param name="logs">Logs.</param>
+		/// <returns>Snapshot.</returns>
+		public static ExecutionMessage ToOrderSnapshot(this IEnumerable<ExecutionMessage> diffs, long transactionId, ILogReceiver logs)
+		{
+			if (diffs is null)
+				throw new ArgumentNullException(nameof(diffs));
 
-			foreach (var order in ownOrders)
+			diffs = diffs.OrderBy(m =>
 			{
-				if (!dict.SafeAdd(Tuple.Create(order.Direction, order.Price)).Add(order))
-					throw new InvalidOperationException(LocalizedStrings.Str415Params.Put(order));
-			}
-
-			var retVal = new List<Quote>(quotes.Select(q => q.Clone()));
-
-			foreach (var quote in retVal.ToArray())
-			{
-				var o = dict.TryGetValue(Tuple.Create(quote.OrderDirection, quote.Price));
-
-				if (o != null)
+				switch (m.OrderState)
 				{
-					foreach (var order in o)
+					case null:
+					case OrderStates.None:
+						return 0;
+					case OrderStates.Pending:
+						return 1;
+					case OrderStates.Active:
+						return 2;
+					case OrderStates.Done:
+					case OrderStates.Failed:
+						return 3;
+					default:
+						throw new ArgumentOutOfRangeException(m.OrderState.ToString());
+				}
+			});
+
+			ExecutionMessage snapshot = null;
+
+			foreach (var execMsg in diffs)
+			{
+				if (!execMsg.HasOrderInfo)
+					throw new InvalidOperationException(LocalizedStrings.Str3794Params.Put(transactionId));
+
+				if (snapshot is null)
+					snapshot = execMsg;
+				else
+				{
+					if (execMsg.Balance != null)
+						snapshot.Balance = snapshot.Balance.ApplyNewBalance(execMsg.Balance.Value, transactionId, logs);
+
+					if (execMsg.OrderState != null)
 					{
-						if (!orders.Contains(order))
-							quote.Volume -= order.Balance;
+						snapshot.OrderState.VerifyOrderState(execMsg.OrderState.Value, transactionId, logs);
+						snapshot.OrderState = execMsg.OrderState.Value;
 					}
 
-					if (quote.Volume <= 0)
-						retVal.Remove(quote);
+					if (execMsg.OrderStatus != null)
+						snapshot.OrderStatus = execMsg.OrderStatus;
+
+					if (execMsg.OrderId != null)
+						snapshot.OrderId = execMsg.OrderId;
+
+					if (!execMsg.OrderStringId.IsEmpty())
+						snapshot.OrderStringId = execMsg.OrderStringId;
+
+					if (execMsg.OrderBoardId != null)
+						snapshot.OrderBoardId = execMsg.OrderBoardId;
+
+					if (execMsg.PnL != null)
+						snapshot.PnL = execMsg.PnL;
+
+					if (execMsg.Position != null)
+						snapshot.Position = execMsg.Position;
+
+					if (execMsg.Commission != null)
+						snapshot.Commission = execMsg.Commission;
+
+					if (execMsg.CommissionCurrency != null)
+						snapshot.CommissionCurrency = execMsg.CommissionCurrency;
+
+					if (execMsg.AveragePrice != null)
+						snapshot.AveragePrice = execMsg.AveragePrice;
+
+					if (execMsg.Latency != null)
+						snapshot.Latency = execMsg.Latency;
 				}
 			}
 
-			return retVal;
+			if (snapshot is null)
+				throw new InvalidOperationException(LocalizedStrings.Str1702Params.Put(transactionId));
+
+			return snapshot;
 		}
 
-		///// <summary>
-		///// To get market price for the instrument by maximal and minimal possible prices.
-		///// </summary>
-		///// <param name="security">The instrument used for the market price calculation.</param>
-		///// <param name="provider">The market data provider.</param>
-		///// <param name="side">Order side.</param>
-		///// <returns>The market price. If there is no information on maximal and minimal possible prices, then <see langword="null" /> will be returned.</returns>
-		//public static decimal? GetMarketPrice(this Security security, IMarketDataProvider provider, Sides side)
-		//{
-		//	var board = security.CheckExchangeBoard();
+		/// <summary>
+		/// Check the possibility <see cref="Order.Balance"/> change.
+		/// </summary>
+		/// <param name="currBal">Current balance.</param>
+		/// <param name="newBal">New balance.</param>
+		/// <param name="transactionId">Transaction id.</param>
+		/// <param name="logs">Logs.</param>
+		/// <returns>New balance.</returns>
+		public static decimal ApplyNewBalance(this decimal? currBal, decimal newBal, long transactionId, ILogReceiver logs)
+		{
+			if (logs is null)
+				throw new ArgumentNullException(nameof(logs));
 
-		//	if (board.IsSupportMarketOrders)
-		//		throw new ArgumentException(LocalizedStrings.Str1210Params.Put(board.Code), nameof(security));
+			if (newBal < 0)
+				logs.AddErrorLog($"Order {transactionId}: balance {newBal} < 0");
 
-		//	var minPrice = (decimal?)provider.GetSecurityValue(security, Level1Fields.MinPrice);
-		//	var maxPrice = (decimal?)provider.GetSecurityValue(security, Level1Fields.MaxPrice);
+			if (currBal < newBal)
+				logs.AddErrorLog($"Order {transactionId}: bal_old {currBal} -> bal_new {newBal}");
 
-		//	if (side == Sides.Buy && maxPrice != null)
-		//		return maxPrice.Value;
-		//	else if (side == Sides.Sell && minPrice != null)
-		//		return minPrice.Value;
-		//	else
-		//		return null;
-		//		//throw new ArgumentException("У инструмента {0} отсутствует информация о планках.".Put(security), "security");
-		//}
+			return newBal;
+		}
 
 		/// <summary>
 		/// To calculate the current price by the instrument depending on the order direction.
@@ -208,17 +235,10 @@ namespace StockSharp.Algo
 			if (provider == null)
 				throw new ArgumentNullException(nameof(provider));
 
-			var depth = provider.GetMarketDepth(security);
-
 			decimal? currentPrice = null;
 
 			if (direction != null)
 			{
-				var result = depth.GetCurrentPrice((Sides)direction, priceType, orders);
-
-				if (result != null)
-					return result;
-
 				currentPrice = (decimal?)provider.GetSecurityValue(security,
 					direction == Sides.Buy ? Level1Fields.BestAskPrice : Level1Fields.BestBidPrice);
 			}
@@ -250,8 +270,62 @@ namespace StockSharp.Algo
 
 			if (orders != null)
 			{
-				var quotes = depth.GetFilteredQuotes(Enumerable.Empty<Order>(), orders);
-				depth = new MarketDepth(depth.Security).Update(quotes, depth.LastChangeTime);
+				var dict = new Dictionary<Tuple<Sides, decimal>, HashSet<Order>>();
+
+				foreach (var order in orders)
+				{
+					if (!dict.SafeAdd(Tuple.Create(order.Direction, order.Price)).Add(order))
+						throw new InvalidOperationException(LocalizedStrings.Str415Params.Put(order));
+				}
+
+				var bids = depth.Bids2.ToList();
+				var asks = depth.Asks2.ToList();
+
+				for (var i = 0; i < bids.Count; i++)
+				{
+					var quote = bids[i];
+
+					if (dict.TryGetValue(Tuple.Create(Sides.Buy, quote.Price), out var bidOrders))
+					{
+						foreach (var order in bidOrders)
+						{
+							if (!orders.Contains(order))
+								quote.Volume -= order.Balance;
+						}
+
+						if (quote.Volume <= 0)
+						{
+							bids.RemoveAt(i);
+							i--;
+						}
+						else
+							bids[i] = quote;
+					}
+				}
+
+				for (var i = 0; i < asks.Count; i++)
+				{
+					var quote = asks[i];
+
+					if (dict.TryGetValue(Tuple.Create(Sides.Sell, quote.Price), out var asksOrders))
+					{
+						foreach (var order in asksOrders)
+						{
+							if (!orders.Contains(order))
+								quote.Volume -= order.Balance;
+						}
+
+						if (quote.Volume <= 0)
+						{
+							asks.RemoveAt(i);
+							i--;
+						}
+						else
+							asks[i] = quote;
+					}
+				}
+
+				depth = new MarketDepth(depth.Security).Update(bids.ToArray(), asks.ToArray(), depth.LastChangeTime);
 			}
 
 			var pair = depth.BestPair;
@@ -279,20 +353,20 @@ namespace StockSharp.Algo
 			{
 				case MarketPriceTypes.Opposite:
 				{
-					var quote = (side == Sides.Buy ? bestPair.Ask : bestPair.Bid);
+					var quote = side == Sides.Buy ? bestPair.Ask : bestPair.Bid;
 					currentPrice = quote?.Price;
 					break;
 				}
 				case MarketPriceTypes.Following:
 				{
-					var quote = (side == Sides.Buy ? bestPair.Bid : bestPair.Ask);
+					var quote = side == Sides.Buy ? bestPair.Bid : bestPair.Ask;
 					currentPrice = quote?.Price;
 					break;
 				}
 				case MarketPriceTypes.Middle:
 				{
 					if (bestPair.IsFull)
-						currentPrice = bestPair.Bid.Price + bestPair.SpreadPrice / 2;
+						currentPrice = bestPair.MiddlePrice;
 					else
 						currentPrice = null;
 					break;
@@ -338,7 +412,7 @@ namespace StockSharp.Algo
 		/// <param name="rule">The price rounding rule.</param>
 		public static void ShrinkPrice(this Order order, ShrinkRules rule = ShrinkRules.Auto)
 		{
-			if (order == null)
+			if (order is null)
 				throw new ArgumentNullException(nameof(order));
 
 			order.Price = order.Security.ShrinkPrice(order.Price, rule);
@@ -353,12 +427,10 @@ namespace StockSharp.Algo
 		/// <returns>The multiple price.</returns>
 		public static decimal ShrinkPrice(this Security security, decimal price, ShrinkRules rule = ShrinkRules.Auto)
 		{
-			//var priceStep = security.CheckPriceStep();
+			if (security is null)
+				throw new ArgumentNullException(nameof(security));
 
-			return price.Round(security.PriceStep ?? 0.01m, security.Decimals ?? 0,
-				rule == ShrinkRules.Auto
-					? (MidpointRounding?)null
-					: (rule == ShrinkRules.Less ? MidpointRounding.AwayFromZero : MidpointRounding.ToEven)).RemoveTrailingZeros();
+			return price.ShrinkPrice(security.PriceStep, security.Decimals, rule);
 		}
 
 		/// <summary>
@@ -371,30 +443,12 @@ namespace StockSharp.Algo
 			if (trade == null)
 				throw new ArgumentNullException(nameof(trade));
 
-			return trade.ToMessage().GetPosition(false);
-		}
+			var position = trade.Trade.Volume;
 
-		/// <summary>
-		/// To get the position on own trade.
-		/// </summary>
-		/// <param name="message">Own trade, used for position calculation. At buy the trade volume <see cref="ExecutionMessage.TradeVolume"/> is taken with positive sign, at sell - with negative.</param>
-		/// <param name="byOrder">To check implemented volume by order balance (<see cref="ExecutionMessage.Balance"/>) or by received trades. The default is checked by the order.</param>
-		/// <returns>Position.</returns>
-		public static decimal? GetPosition(this ExecutionMessage message, bool byOrder)
-		{
-			if (message == null)
-				throw new ArgumentNullException(nameof(message));
+			if (trade.Order.Direction == Sides.Sell)
+				position *= -1;
 
-			var sign = message.Side == Sides.Buy ? 1 : -1;
-
-			decimal? position;
-
-			if (byOrder)
-				position = message.OrderVolume - message.Balance;
-			else
-				position = message.TradeVolume;
-
-			return position * sign;
+			return position;
 		}
 
 		/// <summary>
@@ -418,7 +472,7 @@ namespace StockSharp.Algo
 		/// <returns><see langword="true" />, if time is traded, otherwise, not traded.</returns>
 		public static bool IsTradeTime(this ExchangeBoard board, DateTimeOffset time)
 		{
-			return board.ToMessage().IsTradeTime(time, out _);
+			return board.ToMessage().IsTradeTime(time, out _, out _);
 		}
 
 		/// <summary>
@@ -426,11 +480,12 @@ namespace StockSharp.Algo
 		/// </summary>
 		/// <param name="board">Board info.</param>
 		/// <param name="time">The passed time to be checked.</param>
+		/// <param name="isWorkingDay"><see langword="true" />, if the date is traded, otherwise, is not traded.</param>
 		/// <param name="period">Current working time period.</param>
 		/// <returns><see langword="true" />, if time is traded, otherwise, not traded.</returns>
-		public static bool IsTradeTime(this ExchangeBoard board, DateTimeOffset time, out WorkingTimePeriod period)
+		public static bool IsTradeTime(this ExchangeBoard board, DateTimeOffset time, out bool? isWorkingDay, out WorkingTimePeriod period)
 		{
-			return board.ToMessage().IsTradeTime(time, out period);
+			return board.ToMessage().IsTradeTime(time, out isWorkingDay, out period);
 		}
 
 		/// <summary>
@@ -441,7 +496,7 @@ namespace StockSharp.Algo
 		/// <returns><see langword="true" />, if time is traded, otherwise, not traded.</returns>
 		public static bool IsTradeTime(this BoardMessage board, DateTimeOffset time)
 		{
-			return board.IsTradeTime(time, out _);
+			return board.IsTradeTime(time, out _, out _);
 		}
 
 		/// <summary>
@@ -449,17 +504,18 @@ namespace StockSharp.Algo
 		/// </summary>
 		/// <param name="board">Board info.</param>
 		/// <param name="time">The passed time to be checked.</param>
+		/// <param name="isWorkingDay"><see langword="true" />, if the date is traded, otherwise, is not traded.</param>
 		/// <param name="period">Current working time period.</param>
 		/// <returns><see langword="true" />, if time is traded, otherwise, not traded.</returns>
-		public static bool IsTradeTime(this BoardMessage board, DateTimeOffset time, out WorkingTimePeriod period)
+		public static bool IsTradeTime(this BoardMessage board, DateTimeOffset time, out bool? isWorkingDay, out WorkingTimePeriod period)
 		{
-			if (board == null)
+			if (board is null)
 				throw new ArgumentNullException(nameof(board));
 
 			var exchangeTime = time.ToLocalTime(board.TimeZone);
 			var workingTime = board.WorkingTime;
 
-			return workingTime.IsTradeTime(exchangeTime, out period);
+			return workingTime.IsTradeTime(exchangeTime, out isWorkingDay, out period);
 		}
 
 		/// <summary>
@@ -467,17 +523,24 @@ namespace StockSharp.Algo
 		/// </summary>
 		/// <param name="workingTime">Board working hours.</param>
 		/// <param name="time">The passed time to be checked.</param>
+		/// <param name="isWorkingDay"><see langword="true" />, if the date is traded, otherwise, is not traded.</param>
 		/// <param name="period">Current working time period.</param>
 		/// <returns><see langword="true" />, if time is traded, otherwise, not traded.</returns>
-		public static bool IsTradeTime(this WorkingTime workingTime, DateTime time, out WorkingTimePeriod period)
+		public static bool IsTradeTime(this WorkingTime workingTime, DateTime time, out bool? isWorkingDay, out WorkingTimePeriod period)
 		{
-			var isWorkingDay = workingTime.IsTradeDate(time);
+			if (workingTime is null)
+				throw new ArgumentNullException(nameof(workingTime));
 
-			if (!isWorkingDay)
-			{
-				period = null;
+			period = null;
+			isWorkingDay = null;
+
+			if (!workingTime.IsEnabled)
+				return true;
+
+			isWorkingDay = workingTime.IsTradeDate(time);
+
+			if (isWorkingDay == false)
 				return false;
-			}
 
 			period = workingTime.GetPeriod(time);
 
@@ -558,39 +621,6 @@ namespace StockSharp.Algo
 		}
 
 		/// <summary>
-		/// To create copy of the order for re-registration.
-		/// </summary>
-		/// <param name="oldOrder">The original order.</param>
-		/// <param name="newPrice">Price of the new order.</param>
-		/// <param name="newVolume">Volume of the new order.</param>
-		/// <returns>New order.</returns>
-		public static Order ReRegisterClone(this Order oldOrder, decimal? newPrice = null, decimal? newVolume = null)
-		{
-			if (oldOrder == null)
-				throw new ArgumentNullException(nameof(oldOrder));
-
-			return new Order
-			{
-				Portfolio = oldOrder.Portfolio,
-				Direction = oldOrder.Direction,
-				TimeInForce = oldOrder.TimeInForce,
-				Security = oldOrder.Security,
-				Type = oldOrder.Type,
-				Price = newPrice ?? oldOrder.Price,
-				Volume = newVolume ?? oldOrder.Volume,
-				ExpiryDate = oldOrder.ExpiryDate,
-				VisibleVolume = oldOrder.VisibleVolume,
-				BrokerCode = oldOrder.BrokerCode,
-				ClientCode = oldOrder.ClientCode,
-				Condition = oldOrder.Condition?.TypedClone(),
-				IsManual = oldOrder.IsManual,
-				IsMarketMaker = oldOrder.IsMarketMaker,
-				IsMargin = oldOrder.IsMargin,
-				MinVolume = oldOrder.MinVolume,
-			};
-		}
-
-		/// <summary>
 		/// To create from regular order book a sparse on, with minimal price step of <see cref="Security.PriceStep"/>.
 		/// </summary>
 		/// <remarks>
@@ -615,129 +645,9 @@ namespace StockSharp.Algo
 		/// <param name="depth">The regular order book.</param>
 		/// <param name="priceStep">Minimum price step.</param>
 		/// <returns>The sparse order book.</returns>
-		public static MarketDepth Sparse(this MarketDepth depth, decimal priceStep)
+		public static MarketDepth Sparse(this MarketDepth depth, Unit priceStep)
 		{
-			if (depth == null)
-				throw new ArgumentNullException(nameof(depth));
-
-			var bids = depth.Bids.Sparse(priceStep);
-			var asks = depth.Asks.Sparse(priceStep);
-
-			var pair = depth.BestPair;
-			var spreadQuotes = pair?.Sparse(priceStep).ToArray() ?? ArrayHelper.Empty<Quote>();
-
-			return new MarketDepth(depth.Security).Update(
-				bids.Concat(spreadQuotes.Where(q => q.OrderDirection == Sides.Buy)),
-				asks.Concat(spreadQuotes.Where(q => q.OrderDirection == Sides.Sell)),
-				false, depth.LastChangeTime);
-		}
-
-		/// <summary>
-		/// To create form pair of quotes a sparse collection of quotes, which will be included into the range between the pair.
-		/// </summary>
-		/// <remarks>
-		/// In sparsed collection shown quotes with no active orders. The volume of these quotes is 0.
-		/// </remarks>
-		/// <param name="pair">The pair of regular quotes.</param>
-		/// <param name="priceStep">Minimum price step.</param>
-		/// <returns>The sparse collection of quotes.</returns>
-		public static IEnumerable<Quote> Sparse(this MarketDepthPair pair, decimal priceStep)
-		{
-			if (pair == null)
-				throw new ArgumentNullException(nameof(pair));
-
-			if (priceStep <= 0)
-				throw new ArgumentOutOfRangeException(nameof(priceStep), priceStep, LocalizedStrings.Str1213);
-
-			if (pair.SpreadPrice == null)
-				return Enumerable.Empty<Quote>();
-
-			var security = pair.Bid.Security;
-
-			var retVal = new List<Quote>();
-
-			var bidPrice = pair.Bid.Price;
-			var askPrice = pair.Ask.Price;
-
-			while (true)
-			{
-				bidPrice += priceStep;
-				askPrice -= priceStep;
-
-				if (bidPrice > askPrice)
-					break;
-
-				retVal.Add(new Quote
-				{
-					Security = security,
-					Price = bidPrice,
-					OrderDirection = Sides.Buy,
-				});
-
-				if (bidPrice == askPrice)
-					break;
-
-				retVal.Add(new Quote
-				{
-					Security = security,
-					Price = askPrice,
-					OrderDirection = Sides.Sell,
-				});
-			}
-
-			return retVal.OrderBy(q => q.Price);
-		}
-
-		/// <summary>
-		/// To create the sparse collection of quotes from regular quotes.
-		/// </summary>
-		/// <remarks>
-		/// In sparsed collection shown quotes with no active orders. The volume of these quotes is 0.
-		/// </remarks>
-		/// <param name="quotes">Regular quotes. The collection shall contain quotes of the same direction (only bids or only offers).</param>
-		/// <param name="priceStep">Minimum price step.</param>
-		/// <returns>The sparse collection of quotes.</returns>
-		public static IEnumerable<Quote> Sparse(this IEnumerable<Quote> quotes, decimal priceStep)
-		{
-			if (quotes == null)
-				throw new ArgumentNullException(nameof(quotes));
-
-			if (priceStep <= 0)
-				throw new ArgumentOutOfRangeException(nameof(priceStep), priceStep, LocalizedStrings.Str1213);
-
-			var list = quotes.OrderBy(q => q.Price).ToList();
-
-			if (list.Count < 2)
-				return ArrayHelper.Empty<Quote>();
-
-			var firstQuote = list[0];
-
-			var retVal = new List<Quote>();
-
-			for (var i = 0; i < (list.Count - 1); i++)
-			{
-				var from = list[i];
-
-				if (from.OrderDirection != firstQuote.OrderDirection)
-					throw new ArgumentException(LocalizedStrings.Str1214, nameof(quotes));
-
-				var toPrice = list[i + 1].Price;
-
-				for (var price = (from.Price + priceStep); price < toPrice; price += priceStep)
-				{
-					retVal.Add(new Quote
-					{
-						Security = firstQuote.Security,
-						Price = price,
-						OrderDirection = firstQuote.OrderDirection,
-					});
-				}
-			}
-
-			if (firstQuote.OrderDirection == Sides.Buy)
-				return retVal.OrderByDescending(q => q.Price);
-			else
-				return retVal;
+			return depth.ToMessage().Sparse(priceStep, depth.Security.PriceStep).ToMarketDepth(depth.Security);
 		}
 
 		/// <summary>
@@ -748,13 +658,13 @@ namespace StockSharp.Algo
 		/// <returns>The merged order book.</returns>
 		public static MarketDepth Join(this MarketDepth original, MarketDepth rare)
 		{
-			if (original == null)
+			if (original is null)
 				throw new ArgumentNullException(nameof(original));
 
-			if (rare == null)
+			if (rare is null)
 				throw new ArgumentNullException(nameof(rare));
 
-			return new MarketDepth(original.Security).Update(original.Concat(rare), original.LastChangeTime);
+			return original.ToMessage().Join(rare.ToMessage()).ToMarketDepth(original.Security);
 		}
 
 		/// <summary>
@@ -765,20 +675,17 @@ namespace StockSharp.Algo
 		/// <returns>The grouped order book.</returns>
 		public static MarketDepth Group(this MarketDepth depth, Unit priceRange)
 		{
-			return new MarketDepth(depth.Security).Update(depth.Bids.Group(priceRange), depth.Asks.Group(priceRange), true, depth.LastChangeTime);
+			return depth.ToMessage().Group(priceRange).ToMarketDepth(depth.Security);
 		}
 
 		/// <summary>
-		/// To de-group the order book, grouped using the method <see cref="Group(StockSharp.BusinessEntities.MarketDepth,StockSharp.Messages.Unit)"/>.
+		/// To de-group the order book, grouped using the method <see cref="Group(MarketDepth,Unit)"/>.
 		/// </summary>
 		/// <param name="depth">The grouped order book.</param>
 		/// <returns>The de-grouped order book.</returns>
 		public static MarketDepth UnGroup(this MarketDepth depth)
 		{
-			return new MarketDepth(depth.Security).Update(
-				depth.Bids.Cast<AggregatedQuote>().SelectMany(gq => gq.InnerQuotes),
-				depth.Asks.Cast<AggregatedQuote>().SelectMany(gq => gq.InnerQuotes),
-				false, depth.LastChangeTime);
+			return depth.ToMessage().UnGroup().ToMarketDepth(depth.Security);
 		}
 
 		/// <summary>
@@ -806,10 +713,12 @@ namespace StockSharp.Algo
 				minTradePrice = minTradePrice.Min(price);
 				maxTradePrice = maxTradePrice.Max(price);
 
-				var quote = depth.GetQuote(price);
+				var q = depth.GetQuote(price);
 
-				if (null == quote)
+				if (q is null)
 					continue;
+
+				var quote = q.Value;
 
 				if (!changedVolume.TryGetValue(price, out var vol))
 					vol = quote.Volume;
@@ -818,16 +727,16 @@ namespace StockSharp.Algo
 				changedVolume[quote.Price] = vol;
 			}
 
-			var bids = new Quote[depth.Bids.Length];
+			var bids = new QuoteChange[depth.Bids2.Length];
 
 			void B1()
 			{
 				var i = 0;
 				var count = 0;
 
-				for (; i < depth.Bids.Length; i++)
+				for (; i < depth.Bids2.Length; i++)
 				{
-					var quote = depth.Bids[i];
+					var quote = depth.Bids2[i];
 					var price = quote.Price;
 
 					if (price > minTradePrice)
@@ -840,7 +749,7 @@ namespace StockSharp.Algo
 							if (vol <= 0)
 								continue;
 
-							quote = quote.Clone();
+							//quote = quote.Clone();
 							quote.Volume = vol;
 						}
 					}
@@ -851,22 +760,22 @@ namespace StockSharp.Algo
 					break;
 				}
 
-				Array.Copy(depth.Bids, i, bids, count, depth.Bids.Length - i);
-				Array.Resize(ref bids, count + (depth.Bids.Length - i));
+				Array.Copy(depth.Bids2, i, bids, count, depth.Bids2.Length - i);
+				Array.Resize(ref bids, count + (depth.Bids2.Length - i));
 			}
 
 			B1();
 
-			var asks = new Quote[depth.Asks.Length];
+			var asks = new QuoteChange[depth.Asks2.Length];
 
 			void A1()
 			{
 				var i = 0;
 				var count = 0;
 
-				for (; i < depth.Asks.Length; i++)
+				for (; i < depth.Asks2.Length; i++)
 				{
-					var quote = depth.Asks[i];
+					var quote = depth.Asks2[i];
 					var price = quote.Price;
 
 					if (price < maxTradePrice)
@@ -879,7 +788,7 @@ namespace StockSharp.Algo
 							if (vol <= 0)
 								continue;
 
-							quote = quote.Clone();
+							//quote = quote.Clone();
 							quote.Volume = vol;
 						}
 					}
@@ -890,260 +799,13 @@ namespace StockSharp.Algo
 					break;
 				}
 
-				Array.Copy(depth.Asks, i, asks, count, depth.Asks.Length - i);
-				Array.Resize(ref asks, count + (depth.Asks.Length - i));
+				Array.Copy(depth.Asks2, i, asks, count, depth.Asks2.Length - i);
+				Array.Resize(ref asks, count + (depth.Asks2.Length - i));
 			}
 
 			A1();
 
 			depth.Update(bids, asks, depth.LastChangeTime);
-		}
-
-		/// <summary>
-		/// To group quotes by the price range.
-		/// </summary>
-		/// <param name="quotes">Quotes to be grouped.</param>
-		/// <param name="priceRange">The price range, for which grouping shall be performed.</param>
-		/// <returns>Grouped quotes.</returns>
-		public static IEnumerable<AggregatedQuote> Group(this IEnumerable<Quote> quotes, Unit priceRange)
-		{
-			if (quotes == null)
-				throw new ArgumentNullException(nameof(quotes));
-
-			if (priceRange == null)
-				throw new ArgumentNullException(nameof(priceRange));
-
-			//if (priceRange.Value < double.Epsilon)
-			//	throw new ArgumentOutOfRangeException(nameof(priceRange), priceRange, "Размер группировки меньше допустимого.");
-
-			//if (quotes.Count() < 2)
-			//	return Enumerable.Empty<AggregatedQuote>();
-
-			var firstQuote = quotes.FirstOrDefault();
-
-			if (firstQuote == null)
-				return Enumerable.Empty<AggregatedQuote>();
-
-			var retVal = quotes.GroupBy(q => priceRange.AlignPrice(firstQuote.Price, q.Price)).Select(g =>
-			{
-				var aggQuote = new AggregatedQuote(false) { Price = g.Key };
-				aggQuote.InnerQuotes.AddRange(g);
-				aggQuote.OrdersCount = aggQuote.InnerQuotes.Sum(q => q.OrdersCount ?? 0).DefaultAsNull();
-				return aggQuote;
-			});
-			
-			retVal = firstQuote.OrderDirection == Sides.Sell ? retVal.OrderBy(q => q.Price) : retVal.OrderByDescending(q => q.Price);
-
-			return retVal;
-		}
-
-		internal static decimal AlignPrice(this Unit priceRange, decimal firstPrice, decimal price)
-		{
-			if (priceRange == null)
-				throw new ArgumentNullException(nameof(priceRange));
-
-			decimal priceLevel;
-
-			if (priceRange.Type == UnitTypes.Percent)
-				priceLevel = (decimal)(firstPrice + (((price - firstPrice) * 100) / firstPrice).Floor(priceRange.Value).Percents());
-			else
-				priceLevel = price.Floor((decimal)priceRange);
-
-			return priceLevel;
-		}
-
-		/// <summary>
-		/// To calculate the change between order books.
-		/// </summary>
-		/// <param name="from">First order book.</param>
-		/// <param name="to">Second order book.</param>
-		/// <returns>The order book, storing only increments.</returns>
-		public static QuoteChangeMessage GetDelta(this QuoteChangeMessage from, QuoteChangeMessage to)
-		{
-			if (from == null)
-				throw new ArgumentNullException(nameof(from));
-
-			if (to == null)
-				throw new ArgumentNullException(nameof(to));
-
-			return new QuoteChangeMessage
-			{
-				LocalTime = to.LocalTime,
-				SecurityId = to.SecurityId,
-				Bids = GetDelta(from.Bids, to.Bids, Sides.Buy),
-				Asks = GetDelta(from.Asks, to.Asks, Sides.Sell),
-				ServerTime = to.ServerTime,
-				IsSorted = true,
-			};
-		}
-
-		/// <summary>
-		/// To calculate the change between quotes.
-		/// </summary>
-		/// <param name="from">First quotes.</param>
-		/// <param name="to">Second quotes.</param>
-		/// <param name="side">The direction, showing the type of quotes.</param>
-		/// <returns>Changes.</returns>
-		public static QuoteChange[] GetDelta(this IEnumerable<QuoteChange> from, IEnumerable<QuoteChange> to, Sides side)
-		{
-			if (from == null)
-				throw new ArgumentNullException(nameof(from));
-
-			if (to == null)
-				throw new ArgumentNullException(nameof(to));
-
-			var mapFrom = new Dictionary<decimal, QuoteChange>();
-			var mapTo = new Dictionary<decimal, QuoteChange>();
-
-			foreach (var change in from)
-			{
-				if (!mapFrom.TryAdd(change.Price, change))
-					throw new ArgumentException(LocalizedStrings.Str415Params.Put(change.Price), nameof(from));
-			}
-
-			foreach (var change in to)
-			{
-				if (!mapTo.TryAdd(change.Price, change))
-					throw new ArgumentException(LocalizedStrings.Str415Params.Put(change.Price), nameof(to));
-			}
-
-			foreach (var pair in mapFrom)
-			{
-				var price = pair.Key;
-				var quoteFrom = pair.Value;
-
-				var quoteTo = mapTo.TryGetValue(price);
-
-				if (quoteTo != null)
-				{
-					if (quoteTo.Volume == quoteFrom.Volume &&
-						quoteTo.OrdersCount == quoteFrom.OrdersCount &&
-						quoteTo.Action == quoteFrom.Action &&
-						quoteTo.Condition == quoteFrom.Condition &&
-						quoteTo.StartPosition == quoteFrom.StartPosition &&
-						quoteTo.EndPosition == quoteFrom.EndPosition)
-					{
-						mapTo.Remove(price);		// то же самое
-					}
-				}
-				else
-				{
-					var empty = quoteFrom.Clone();
-					empty.Volume = 0;				// была, а теперь нет
-					mapTo[price] = empty;
-				}
-			}
-
-			return mapTo
-				.Values
-				.OrderBy(q => q.Price * (side == Sides.Buy ? -1 : 1))
-				.ToArray();
-		}
-
-		/// <summary>
-		/// To add change to the first order book.
-		/// </summary>
-		/// <param name="from">First order book.</param>
-		/// <param name="delta">Change.</param>
-		/// <returns>The changed order book.</returns>
-		public static QuoteChangeMessage AddDelta(this QuoteChangeMessage from, QuoteChangeMessage delta)
-		{
-			if (from == null)
-				throw new ArgumentNullException(nameof(from));
-
-			if (delta == null)
-				throw new ArgumentNullException(nameof(delta));
-
-			if (!from.IsSorted)
-				throw new ArgumentException(nameof(from));
-
-			if (!delta.IsSorted)
-				throw new ArgumentException(nameof(delta));
-
-			return new QuoteChangeMessage
-			{
-				LocalTime = delta.LocalTime,
-				SecurityId = from.SecurityId,
-				Bids = AddDelta(from.Bids, delta.Bids, true),
-				Asks = AddDelta(from.Asks, delta.Asks, false),
-				ServerTime = delta.ServerTime,
-				IsSorted = true,
-			};
-		}
-
-		/// <summary>
-		/// To add change to quote.
-		/// </summary>
-		/// <param name="fromQuotes">Quotes.</param>
-		/// <param name="deltaQuotes">Changes.</param>
-		/// <param name="isBids">The indication of quotes direction.</param>
-		/// <returns>Changed quotes.</returns>
-		public static QuoteChange[] AddDelta(this IEnumerable<QuoteChange> fromQuotes, IEnumerable<QuoteChange> deltaQuotes, bool isBids)
-		{
-			var result = new List<QuoteChange>();
-
-			using (var fromEnu = fromQuotes.GetEnumerator())
-			{
-				var hasFrom = fromEnu.MoveNext();
-
-				foreach (var quoteChange in deltaQuotes)
-				{
-					var canAdd = true;
-
-					while (hasFrom)
-					{
-						var current = fromEnu.Current;
-
-						if (isBids)
-						{
-							if (current.Price > quoteChange.Price)
-								result.Add(current);
-							else if (current.Price == quoteChange.Price)
-							{
-								if (quoteChange.Volume != 0)
-									result.Add(quoteChange);
-
-								hasFrom = fromEnu.MoveNext();
-								canAdd = false;
-
-								break;
-							}
-							else
-								break;
-						}
-						else
-						{
-							if (current.Price < quoteChange.Price)
-								result.Add(current);
-							else if (current.Price == quoteChange.Price)
-							{
-								if (quoteChange.Volume != 0)
-									result.Add(quoteChange);
-
-								hasFrom = fromEnu.MoveNext();
-								canAdd = false;
-
-								break;
-							}
-							else
-								break;
-						}
-
-						hasFrom = fromEnu.MoveNext();
-					}
-
-					if (canAdd && quoteChange.Volume != 0)
-						result.Add(quoteChange);
-				}
-
-				while (hasFrom)
-				{
-					result.Add(fromEnu.Current);
-					hasFrom = fromEnu.MoveNext();
-				}
-			}
-
-			return result.ToArray();
 		}
 
 		/// <summary>
@@ -1327,7 +989,7 @@ namespace StockSharp.Algo
 
 			var trades = new List<MyTrade>();
 
-			using (IMarketEmulator emulator = new MarketEmulator(new CollectionSecurityProvider(new[] { order.Security }), new CollectionPortfolioProvider(new[] { testPf })))
+			using (IMarketEmulator emulator = new MarketEmulator(new CollectionSecurityProvider(new[] { order.Security }), new CollectionPortfolioProvider(new[] { testPf }), new InMemoryExchangeInfoProvider(), new IncrementalIdGenerator()))
 			{
 				var errors = new List<Exception>();
 
@@ -1361,7 +1023,7 @@ namespace StockSharp.Algo
 				emulator.SendInMessage(regMsg);
 
 				if (errors.Count > 0)
-					throw errors.SingleOrAggr();
+					throw new AggregateException(errors);
 			}
 
 			return trades;
@@ -1793,7 +1455,7 @@ namespace StockSharp.Algo
 			if (depth == null)
 				throw new ArgumentNullException(nameof(depth));
 
-			return depth.Bids.Length ==0 && depth.Asks.Length == 0;
+			return depth.Bids2.Length ==0 && depth.Asks2.Length == 0;
 		}
 
 		/// <summary>
@@ -1806,7 +1468,12 @@ namespace StockSharp.Algo
 			if (depth == null)
 				throw new ArgumentNullException(nameof(depth));
 
-			return (depth.BestPair.Bid == null || depth.BestPair.Ask == null) && (depth.BestPair.Bid != depth.BestPair.Ask);
+			var pair = depth.BestPair;
+
+			if (pair.Bid == null)
+				return pair.Ask != null;
+			else
+				return pair.Ask == null;
 		}
 
 		/// <summary>
@@ -1992,72 +1659,6 @@ namespace StockSharp.Algo
 			}
 		}
 
-		private sealed class NativePositionManager : IPositionManager
-		{
-			private readonly Position _position;
-
-			public NativePositionManager(Position position)
-			{
-				_position = position ?? throw new ArgumentNullException(nameof(position));
-			}
-
-			/// <summary>
-			/// The position aggregate value.
-			/// </summary>
-			decimal IPositionManager.Position
-			{
-				get => _position.CurrentValue ?? 0;
-				set => throw new NotSupportedException();
-			}
-
-			SecurityId? IPositionManager.SecurityId
-			{
-				get => _position.Security.ToSecurityId();
-				set => throw new NotSupportedException();
-			}
-
-			event Action<Tuple<SecurityId, string>, decimal> IPositionManager.NewPosition
-			{
-				add { }
-				remove { }
-			}
-
-			event Action<Tuple<SecurityId, string>, decimal> IPositionManager.PositionChanged
-			{
-				add { }
-				remove { }
-			}
-
-			IEnumerable<KeyValuePair<Tuple<SecurityId, string>, decimal>> IPositionManager.Positions
-			{
-				get => throw new NotSupportedException();
-				set => throw new NotSupportedException();
-			}
-
-			void IPositionManager.Reset()
-			{
-				throw new NotSupportedException();
-			}
-
-			decimal? IPositionManager.ProcessMessage(Message message)
-			{
-				throw new NotSupportedException();
-			}
-		}
-
-		/// <summary>
-		/// Convert the position object to the type <see cref="IPositionManager"/>.
-		/// </summary>
-		/// <param name="position">Position.</param>
-		/// <returns>Position calc manager.</returns>
-		public static IPositionManager ToPositionManager(this Position position)
-		{
-			if (position == null)
-				throw new ArgumentNullException(nameof(position));
-
-			return new NativePositionManager(position);
-		}
-
 		/// <summary>
 		/// Write order info to the log.
 		/// </summary>
@@ -2094,6 +1695,56 @@ namespace StockSharp.Algo
 			var additionalInfo = getAdditionalInfo == null ? string.Empty : getAdditionalInfo();
 
 			receiver.AddLog(new LogMessage(receiver, receiver.CurrentTime, type, () => "{0}: {1} {2}".Put(operation, orderDescription, additionalInfo)));
+		}
+
+		/// <summary>
+		/// Change subscription state.
+		/// </summary>
+		/// <param name="currState">Current state.</param>
+		/// <param name="newState">New state.</param>
+		/// <param name="subscriptionId">Subscription id.</param>
+		/// <param name="receiver">Logs.</param>
+		/// <param name="isInfoLevel">Use <see cref="LogLevels.Info"/> for log message.</param>
+		/// <returns>New state.</returns>
+		public static SubscriptionStates ChangeSubscriptionState(this SubscriptionStates currState, SubscriptionStates newState, long subscriptionId, ILogReceiver receiver, bool isInfoLevel = true)
+		{
+			bool isOk;
+
+			if (currState == newState)
+				isOk = false;
+			else
+			{
+				switch (currState)
+				{
+					case SubscriptionStates.Stopped:
+					case SubscriptionStates.Active:
+						isOk = true;
+						break;
+					case SubscriptionStates.Error:
+					case SubscriptionStates.Finished:
+						isOk = false;
+						break;
+					case SubscriptionStates.Online:
+						isOk = newState != SubscriptionStates.Active;
+						break;
+					default:
+						throw new ArgumentOutOfRangeException(nameof(currState), currState, LocalizedStrings.Str1219);
+				}
+			}
+
+			const string text = "Subscription {0} {1}->{2}.";
+
+			if (isOk)
+			{
+				if (isInfoLevel)
+					receiver.AddInfoLog(text, subscriptionId, currState, newState);
+				else
+					receiver.AddDebugLog(text, subscriptionId, currState, newState);
+			}
+			else
+				receiver.AddWarningLog(text, subscriptionId, currState, newState);
+
+			return newState;
 		}
 
 		/// <summary>
@@ -2256,8 +1907,8 @@ namespace StockSharp.Algo
 			var bidChanged = false;
 			var askChanged = false;
 			var lastTradeChanged = false;
-			var bestBid = security.BestBid != null ? security.BestBid.Clone() : new Quote(security, 0, 0, Sides.Buy);
-			var bestAsk = security.BestAsk != null ? security.BestAsk.Clone() : new Quote(security, 0, 0, Sides.Sell);
+			var bestBid = security.BestBid ?? new QuoteChange();
+			var bestAsk = security.BestAsk ?? new QuoteChange();
 
 			var lastTrade = new Trade { Security = security };
 
@@ -2287,16 +1938,6 @@ namespace StockSharp.Algo
 						case Level1Fields.ClosePrice:
 							security.ClosePrice = (decimal)value;
 							break;
-						case Level1Fields.LastTrade:
-						{
-							lastTrade = (Trade)value;
-
-							lastTrade.Security = security;
-							//lastTrade.LocalTime = message.LocalTime;
-
-							lastTradeChanged = true;
-							break;
-						}
 						case Level1Fields.StepPrice:
 							security.StepPrice = (decimal)value;
 							break;
@@ -2311,14 +1952,6 @@ namespace StockSharp.Algo
 							break;
 						case Level1Fields.Multiplier:
 							security.Multiplier = (decimal)value;
-							break;
-						case Level1Fields.BestBid:
-							bestBid = (Quote)value;
-							bidChanged = true;
-							break;
-						case Level1Fields.BestAsk:
-							bestAsk = (Quote)value;
-							askChanged = true;
 							break;
 						case Level1Fields.BestBidPrice:
 							bestBid.Price = (decimal)value;
@@ -2400,6 +2033,10 @@ namespace StockSharp.Algo
 							break;
 						case Level1Fields.LastTradeId:
 							lastTrade.Id = (long)value;
+							lastTradeChanged = true;
+							break;
+						case Level1Fields.LastTradeStringId:
+							lastTrade.StringId = (string)value;
 							lastTradeChanged = true;
 							break;
 						case Level1Fields.LastTradeTime:
@@ -2745,9 +2382,9 @@ namespace StockSharp.Algo
 		/// <param name="provider">The provider of information about instruments.</param>
 		/// <param name="id">Security ID.</param>
 		/// <returns>The got instrument. If there is no instrument by given criteria, <see langword="null" /> is returned.</returns>
-		public static Security LookupById(this ISecurityProvider provider, SecurityId id)
+		public static Security LookupById(this ISecurityProvider provider, string id)
 		{
-			return provider.LookupById(id.ToStringId());
+			return provider.LookupById(id.ToSecurityId());
 		}
 
 		/// <summary>
@@ -2762,20 +2399,6 @@ namespace StockSharp.Algo
 				throw new ArgumentNullException(nameof(provider));
 
 			return provider.Lookup(criteria.ToLookupMessage());
-		}
-
-		/// <summary>
-		/// To get the instrument by the identifier.
-		/// </summary>
-		/// <param name="provider">The provider of information about instruments.</param>
-		/// <param name="id">Security ID.</param>
-		/// <returns>The got instrument. If there is no instrument by given criteria, <see langword="null" /> is returned.</returns>
-		public static Security LookupById(this ISecurityProvider provider, string id)
-		{
-			if (id.IsEmpty())
-				throw new ArgumentNullException(nameof(id));
-
-			return provider.Lookup(new Security { Id = id }).SingleOrDefault();
 		}
 
 		/// <summary>
@@ -2854,15 +2477,129 @@ namespace StockSharp.Algo
 		}
 
 		/// <summary>
+		/// Get or create (if not exist).
+		/// </summary>
+		/// <param name="storage">Securities meta info storage.</param>
+		/// <param name="id">Security ID.</param>
+		/// <param name="creator">Creator.</param>
+		/// <param name="isNew">Is newly created.</param>
+		/// <returns>Security.</returns>
+		public static Security GetOrCreate(this ISecurityStorage storage, SecurityId id, Func<string, Security> creator, out bool isNew)
+		{
+			if (storage is null)
+				throw new ArgumentNullException(nameof(storage));
+
+			if (id == default)
+				throw new ArgumentNullException(nameof(storage));
+
+			if (creator is null)
+				throw new ArgumentNullException(nameof(creator));
+
+			lock (storage.SyncRoot)
+			{
+				var security = storage.LookupById(id);
+
+				if (security == null)
+				{
+					security = creator(id.ToStringId());
+					storage.Save(security, false);
+					isNew = true;
+				}
+				else
+					isNew = false;
+
+				return security;
+			}
+		}
+
+		/// <summary>
+		/// Get or create (if not exist).
+		/// </summary>
+		/// <param name="storage">Storage.</param>
+		/// <param name="portfolioName">Portfolio code name.</param>
+		/// <param name="creator">Creator.</param>
+		/// <param name="isNew">Is newly created.</param>
+		/// <returns>Portfolio.</returns>
+		public static Portfolio GetOrCreatePortfolio(this IPositionStorage storage, string portfolioName, Func<string, Portfolio> creator, out bool isNew)
+		{
+			if (storage is null)
+				throw new ArgumentNullException(nameof(storage));
+
+			if (creator is null)
+				throw new ArgumentNullException(nameof(creator));
+
+			lock (storage.SyncRoot)
+			{
+				var portfolio = storage.LookupByPortfolioName(portfolioName);
+
+				if (portfolio == null)
+				{
+					portfolio = creator(portfolioName);
+					storage.Save(portfolio);
+					isNew = true;
+				}
+				else
+					isNew = false;
+
+				return portfolio;
+			}
+		}
+
+		/// <summary>
+		/// Get or create (if not exist).
+		/// </summary>
+		/// <param name="storage">Storage.</param>
+		/// <param name="portfolio">Portfolio.</param>
+		/// <param name="security">Security.</param>
+		/// <param name="strategyId">Strategy ID.</param>
+		/// <param name="side">Side.</param>
+		/// <param name="clientCode">Client code.</param>
+		/// <param name="depoName">Depo name.</param>
+		/// <param name="limitType">Limit type.</param>
+		/// <param name="creator">Creator.</param>
+		/// <param name="isNew">Is newly created.</param>
+		/// <returns>Position.</returns>
+		public static Position GetOrCreatePosition(this IPositionStorage storage, Portfolio portfolio, Security security, string strategyId, Sides? side, string clientCode, string depoName, TPlusLimits? limitType, Func<Portfolio, Security, string, Sides?, string, string, TPlusLimits?, Position> creator, out bool isNew)
+		{
+			if (storage is null)
+				throw new ArgumentNullException(nameof(storage));
+
+			if (portfolio is null)
+				throw new ArgumentNullException(nameof(portfolio));
+
+			if (security is null)
+				throw new ArgumentNullException(nameof(security));
+
+			if (creator is null)
+				throw new ArgumentNullException(nameof(creator));
+
+			lock (storage.SyncRoot)
+			{
+				var position = storage.GetPosition(portfolio, security, strategyId, side, clientCode, depoName, limitType);
+
+				if (position == null)
+				{
+					position = creator(portfolio, security, strategyId, side, clientCode, depoName, limitType);
+					storage.Save(position);
+					isNew = true;
+				}
+				else
+					isNew = false;
+
+				return position;
+			}
+		}
+
+		/// <summary>
 		/// To delete all instruments.
 		/// </summary>
 		/// <param name="storage">Securities meta info storage.</param>
 		public static void DeleteAll(this ISecurityStorage storage)
 		{
-			if (storage == null)
+			if (storage is null)
 				throw new ArgumentNullException(nameof(storage));
 
-			storage.DeleteBy(LookupAllCriteria);
+			storage.DeleteBy(Extensions.LookupAllCriteriaMessage);
 		}
 
 		/// <summary>
@@ -3145,16 +2882,6 @@ namespace StockSharp.Algo
 			throw new ArgumentOutOfRangeException(nameof(message), null, LocalizedStrings.Str925);
 		}
 
-		/// <summary>
-		/// To check the specified date is today.
-		/// </summary>
-		/// <param name="date">The specified date.</param>
-		/// <returns><see langword="true"/> if the specified date is today, otherwise, <see langword="false"/>.</returns>
-		public static bool IsToday(this DateTimeOffset date)
-		{
-			return date.DateTime == DateTime.Today;
-		}
-
 		///// <summary>
 		///// To check the specified date is GTC.
 		///// </summary>
@@ -3324,7 +3051,7 @@ namespace StockSharp.Algo
 		/// </summary>
 		public static Security AllSecurity { get; } = new Security
 		{
-			Id = SecurityId.All.ToStringId(),
+			Id = "ALL@ALL",
 			Code = SecurityId.AssociatedBoardCode,
 			//Class = task.GetDisplayName(),
 			Name = LocalizedStrings.Str2835,
@@ -3348,7 +3075,7 @@ namespace StockSharp.Algo
 		/// <returns>Found instance.</returns>
 		public static Security GetAllSecurity(this ISecurityProvider provider)
 		{
-			return provider.LookupById(SecurityId.All);
+			return provider.LookupById(default);
 		}
 
 		/// <summary>
@@ -3428,7 +3155,7 @@ namespace StockSharp.Algo
 			if (message == null)
 				throw new ArgumentNullException(nameof(message));
 
-			return message.Asks.Select(q => new TimeQuoteChange(Sides.Sell, q, message)).Concat(message.Bids.Select(q => new TimeQuoteChange(Sides.Buy, q, message))).OrderByDescending(q => q.Price);
+			return message.Asks.Select(q => new TimeQuoteChange(Sides.Sell, q, message)).Concat(message.Bids.Select(q => new TimeQuoteChange(Sides.Buy, q, message))).OrderByDescending(q => q.Quote.Price);
 		}
 
 		/// <summary>
@@ -3449,16 +3176,15 @@ namespace StockSharp.Algo
 		/// Lookup securities, portfolios and orders.
 		/// </summary>
 		/// <param name="connector">The connection of interaction with trade systems.</param>
-		/// <param name="offlineMode">Offline mode handling message.</param>
-		public static void LookupAll(this IConnector connector, MessageOfflineModes offlineMode = MessageOfflineModes.Cancel)
+		public static void LookupAll(this Connector connector)
 		{
-			if (connector == null)
+			if (connector is null)
 				throw new ArgumentNullException(nameof(connector));
 
-			connector.LookupBoards(new ExchangeBoard(), offlineMode: offlineMode);
-			connector.LookupSecurities(LookupAllCriteria, offlineMode: offlineMode);
-			connector.LookupPortfolios(new Portfolio(), offlineMode: offlineMode);
-			connector.LookupOrders(new Order(), offlineMode: offlineMode);
+			connector.Subscribe(DataType.Board.ToSubscription());
+			connector.Subscribe(DataType.Securities.ToSubscription());
+			connector.Subscribe(DataType.PositionChanges.ToSubscription());
+			connector.Subscribe(DataType.Transactions.ToSubscription());
 		}
 
 		/// <summary>
@@ -3473,7 +3199,7 @@ namespace StockSharp.Algo
 				throw new ArgumentNullException(nameof(depth));
 
 			var result = depth.Clone();
-			result.Update(result.Bids.Take(maxDepth), result.Asks.Take(maxDepth), true);
+			result.Update(result.Bids2.Take(maxDepth).ToArray(), result.Asks2.Take(maxDepth).ToArray(), depth.LastChangeTime);
 			return result;
 		}
 
@@ -3689,22 +3415,25 @@ namespace StockSharp.Algo
 		/// <summary>
 		/// Filter boards by code criteria.
 		/// </summary>
+		/// <param name="provider">The exchange boards provider.</param>
+		/// <param name="criteria">Criteria.</param>
+		/// <returns>Found boards.</returns>
+		public static IEnumerable<BoardMessage> LookupBoards2(this IExchangeInfoProvider provider, BoardLookupMessage criteria)
+		{
+			if (provider == null)
+				throw new ArgumentNullException(nameof(provider));
+
+			return provider.Boards.Select(b => b.ToMessage(criteria.TransactionId)).Filter(criteria);
+		}
+
+		/// <summary>
+		/// Filter boards by code criteria.
+		/// </summary>
 		/// <param name="boards">All boards.</param>
 		/// <param name="criteria">Criteria.</param>
 		/// <returns>Found boards.</returns>
 		public static IEnumerable<ExchangeBoard> Filter(this IEnumerable<ExchangeBoard> boards, BoardLookupMessage criteria)
-		{
-			if (boards == null)
-				throw new ArgumentNullException(nameof(boards));
-
-			if (criteria == null)
-				throw new ArgumentNullException(nameof(criteria));
-
-			if (!criteria.Like.IsEmpty())
-				boards = boards.Where(b => b.Code.ContainsIgnoreCase(criteria.Like));
-
-			return boards;
-		}
+			=> boards.Where(b => b.ToMessage().IsMatch(criteria));
 
 		/// <summary>
 		/// Filter portfolios by the specified criteria.
@@ -3713,24 +3442,7 @@ namespace StockSharp.Algo
 		/// <param name="criteria">Criteria.</param>
 		/// <returns>Found portfolios.</returns>
 		public static IEnumerable<Portfolio> Filter(this IEnumerable<Portfolio> portfolios, PortfolioLookupMessage criteria)
-		{
-			if (portfolios == null)
-				throw new ArgumentNullException(nameof(portfolios));
-
-			if (criteria == null)
-				throw new ArgumentNullException(nameof(criteria));
-
-			if (!criteria.PortfolioName.IsEmpty())
-				portfolios = portfolios.Where(p => p.Name.ContainsIgnoreCase(criteria.PortfolioName));
-
-			if (criteria.Currency != null)
-				portfolios = portfolios.Where(p => p.Currency == criteria.Currency);
-
-			if (!criteria.BoardCode.IsEmpty())
-				portfolios = portfolios.Where(p => p.Board?.Code.ContainsIgnoreCase(criteria.BoardCode) == true);
-
-			return portfolios;
-		}
+			=> portfolios.Where(p => p.ToMessage().IsMatch(criteria, false));
 
 		/// <summary>
 		/// Filter positions the specified criteria.
@@ -3739,45 +3451,7 @@ namespace StockSharp.Algo
 		/// <param name="criteria">Criteria.</param>
 		/// <returns>Found positions.</returns>
 		public static IEnumerable<Position> Filter(this IEnumerable<Position> positions, PortfolioLookupMessage criteria)
-		{
-			if (positions == null)
-				throw new ArgumentNullException(nameof(positions));
-
-			if (criteria == null)
-				throw new ArgumentNullException(nameof(criteria));
-
-			if (!criteria.PortfolioName.IsEmpty())
-				positions = positions.Where(p => p.Portfolio.Name.ContainsIgnoreCase(criteria.PortfolioName));
-
-			if (criteria.Currency != null)
-				positions = positions.Where(p => p.Currency == criteria.Currency);
-
-			if (criteria.SecurityId != null)
-				positions = positions.Where(p => p.Security.ToSecurityId() == criteria.SecurityId.Value);
-
-			if (!criteria.BoardCode.IsEmpty())
-				positions = positions.Where(p => p.Security.ToSecurityId().BoardCode.ContainsIgnoreCase(criteria.BoardCode));
-
-			return positions;
-		}
-
-		/// <summary>
-		/// Reregister the order.
-		/// </summary>
-		/// <param name="provider">The transactional provider.</param>
-		/// <param name="oldOrder">Changing order.</param>
-		/// <param name="price">Price of the new order.</param>
-		/// <param name="volume">Volume of the new order.</param>
-		/// <returns>New order.</returns>
-		public static Order ReRegisterOrder(this ITransactionProvider provider, Order oldOrder, decimal price, decimal volume)
-		{
-			if (provider == null)
-				throw new ArgumentNullException(nameof(provider));
-
-			var newOrder = oldOrder.ReRegisterClone(price, volume);
-			provider.ReRegisterOrder(oldOrder, newOrder);
-			return newOrder;
-		}
+			=> positions.Where(p => p.ToChangeMessage().IsMatch(criteria, false));
 
 		private static void DoConnect(this IMessageAdapter adapter, IEnumerable<Message> requests, bool waitResponse, Func<Message, Tuple<bool, Exception>> newMessage)
 		{
@@ -4076,27 +3750,6 @@ namespace StockSharp.Algo
 			init(adapter);
 			connector.Adapter.InnerAdapters.Add(adapter);
 			return connector;
-		}
-
-		internal static bool IsOk(this SubscriptionStates fromState, SubscriptionStates toState)
-		{
-			if (fromState == toState)
-				return false;
-
-			switch (fromState)
-			{
-				case SubscriptionStates.Stopped:
-					return true;
-				case SubscriptionStates.Active:
-					return true;
-				case SubscriptionStates.Error:
-				case SubscriptionStates.Finished:
-					return false;
-				case SubscriptionStates.Online:
-					return toState != SubscriptionStates.Active;
-				default:
-					throw new ArgumentOutOfRangeException(nameof(fromState), fromState, LocalizedStrings.Str1219);
-			}
 		}
 
 		/// <summary>

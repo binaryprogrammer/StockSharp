@@ -21,6 +21,7 @@ namespace StockSharp.BusinessEntities
 	using System.Runtime.Serialization;
 	using System.Xml.Serialization;
 
+	using Ecng.Common;
 	using Ecng.ComponentModel;
 	using Ecng.Serialization;
 
@@ -63,7 +64,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_beginValue = value;
-				NotifyChanged(nameof(BeginValue));
+				NotifyChanged();
 			}
 		}
 
@@ -87,7 +88,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_currentValue = value;
-				NotifyChanged(nameof(CurrentValue));
+				NotifyChanged();
 			}
 		}
 
@@ -111,7 +112,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_blockedValue = value;
-				NotifyChanged(nameof(BlockedValue));
+				NotifyChanged();
 			}
 		}
 
@@ -136,7 +137,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_extensionInfo = value;
-				NotifyChanged(nameof(ExtensionInfo));
+				NotifyChanged();
 			}
 		}
 
@@ -160,7 +161,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_currentPrice = value;
-				NotifyChanged(nameof(CurrentPrice));
+				NotifyChanged();
 			}
 		}
 
@@ -184,7 +185,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_averagePrice = value;
-				NotifyChanged(nameof(AveragePrice));
+				NotifyChanged();
 			}
 		}
 
@@ -208,7 +209,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_unrealizedPnL = value;
-				NotifyChanged(nameof(UnrealizedPnL));
+				NotifyChanged();
 			}
 		}
 
@@ -232,7 +233,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_realizedPnL = value;
-				NotifyChanged(nameof(RealizedPnL));
+				NotifyChanged();
 			}
 		}
 
@@ -256,7 +257,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_variationMargin = value;
-				NotifyChanged(nameof(VariationMargin));
+				NotifyChanged();
 			}
 		}
 
@@ -280,7 +281,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_commission = value;
-				NotifyChanged(nameof(Commission));
+				NotifyChanged();
 			}
 		}
 
@@ -304,7 +305,7 @@ namespace StockSharp.BusinessEntities
 					return;
 
 				_settlementPrice = value;
-				NotifyChanged(nameof(SettlementPrice));
+				NotifyChanged();
 			}
 		}
 
@@ -324,7 +325,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_lastChangeTime = value;
-				NotifyChanged(nameof(LastChangeTime));
+				NotifyChanged();
 			}
 		}
 
@@ -344,7 +345,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_localTime = value;
-				NotifyChanged(nameof(LocalTime));
+				NotifyChanged();
 			}
 		}
 
@@ -363,7 +364,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_description = value;
-				NotifyChanged(nameof(Description));
+				NotifyChanged();
 			}
 		}
 
@@ -383,7 +384,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_currency = value;
-				NotifyChanged(nameof(Currency));
+				NotifyChanged();
 			}
 		}
 
@@ -403,7 +404,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_expirationDate = value;
-				NotifyChanged(nameof(ExpirationDate));
+				NotifyChanged();
 			}
 		}
 
@@ -442,6 +443,7 @@ namespace StockSharp.BusinessEntities
 		[DisplayNameLoc(LocalizedStrings.DepoKey)]
 		[DescriptionLoc(LocalizedStrings.DepoNameKey)]
 		[MainCategory]
+		[DataMember]
 		public string DepoName { get; set; }
 
 		/// <summary>
@@ -451,7 +453,20 @@ namespace StockSharp.BusinessEntities
 		[DescriptionLoc(LocalizedStrings.Str267Key)]
 		[MainCategory]
 		[Nullable]
+		[DataMember]
 		public TPlusLimits? LimitType { get; set; }
+
+		/// <summary>
+		/// Strategy id.
+		/// </summary>
+		[DataMember]
+		public string StrategyId { get; set; }
+
+		/// <summary>
+		/// Side.
+		/// </summary>
+		[DataMember]
+		public Sides? Side { get; set; }
 
 		private decimal? _leverage;
 
@@ -471,11 +486,11 @@ namespace StockSharp.BusinessEntities
 				if (_leverage == value)
 					return;
 
-				if (value < 0)
-					throw new ArgumentOutOfRangeException(nameof(value), value, LocalizedStrings.Str1219);
+				//if (value < 0)
+				//	throw new ArgumentOutOfRangeException(nameof(value), value, LocalizedStrings.Str1219);
 
 				_leverage = value;
-				NotifyChanged(nameof(Leverage));
+				NotifyChanged();
 			}
 		}
 
@@ -493,7 +508,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_commissionTaker = value;
-				NotifyChanged(nameof(CommissionTaker));
+				NotifyChanged();
 			}
 		}
 
@@ -511,7 +526,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_commissionMaker = value;
-				NotifyChanged(nameof(CommissionMaker));
+				NotifyChanged();
 			}
 		}
 
@@ -529,7 +544,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_buyOrdersCount = value;
-				NotifyChanged(nameof(BuyOrdersCount));
+				NotifyChanged();
 			}
 		}
 
@@ -547,7 +562,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_sellOrdersCount = value;
-				NotifyChanged(nameof(SellOrdersCount));
+				NotifyChanged();
 			}
 		}
 
@@ -565,7 +580,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_buyOrdersMargin = value;
-				NotifyChanged(nameof(BuyOrdersMargin));
+				NotifyChanged();
 			}
 		}
 
@@ -583,7 +598,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_sellOrdersMargin = value;
-				NotifyChanged(nameof(SellOrdersMargin));
+				NotifyChanged();
 			}
 		}
 
@@ -601,7 +616,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_ordersMargin = value;
-				NotifyChanged(nameof(OrdersMargin));
+				NotifyChanged();
 			}
 		}
 
@@ -619,7 +634,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_ordersCount = value;
-				NotifyChanged(nameof(OrdersCount));
+				NotifyChanged();
 			}
 		}
 
@@ -637,7 +652,7 @@ namespace StockSharp.BusinessEntities
 			set
 			{
 				_tradesCount = value;
-				NotifyChanged(nameof(TradesCount));
+				NotifyChanged();
 			}
 		}
 
@@ -682,6 +697,8 @@ namespace StockSharp.BusinessEntities
 			destination.Security = Security;
 			destination.DepoName = DepoName;
 			destination.LimitType = LimitType;
+			destination.StrategyId = StrategyId;
+			destination.Side = Side;
 
 			destination.Leverage = Leverage;
 			destination.CommissionMaker = CommissionMaker;
@@ -698,7 +715,15 @@ namespace StockSharp.BusinessEntities
 		/// <inheritdoc />
 		public override string ToString()
 		{
-			return $"{Portfolio}-{Security}";
+			var str = $"{Portfolio}-{Security}";
+
+			if (!StrategyId.IsEmpty())
+				str += $"-{StrategyId}";
+
+			if (Side != null)
+				str += $"-{Side.Value}";
+
+			return str;
 		}
 	}
 }

@@ -102,7 +102,7 @@ namespace StockSharp.Algo.Testing
 			get => _maxBidsDepth;
 			set
 			{
-				if (value <= 0)
+				if (value < 0)
 					throw new ArgumentOutOfRangeException(nameof(value), value, LocalizedStrings.Str1139);
 
 				_maxBidsDepth = value;
@@ -122,7 +122,7 @@ namespace StockSharp.Algo.Testing
 			get => _maxAsksDepth;
 			set
 			{
-				if (value <= 0)
+				if (value < 0)
 					throw new ArgumentOutOfRangeException(nameof(value), value, LocalizedStrings.Str1140);
 
 				_maxAsksDepth = value;
@@ -180,6 +180,22 @@ namespace StockSharp.Algo.Testing
 				ordersCount = Volumes.Next();
 
 			return new QuoteChange(price, Volumes.Next(), ordersCount);
+		}
+
+		/// <summary>
+		/// Copy the message into the <paramref name="destination" />.
+		/// </summary>
+		/// <param name="destination">The object, to which copied information.</param>
+		protected void CopyTo(MarketDepthGenerator destination)
+		{
+			base.CopyTo(destination);
+
+			destination.UseTradeVolume = UseTradeVolume;
+			destination.MinSpreadStepCount = MinSpreadStepCount;
+			destination.MaxSpreadStepCount = MaxSpreadStepCount;
+			destination.MaxBidsDepth = MaxBidsDepth;
+			destination.MaxAsksDepth = MaxAsksDepth;
+			destination.MaxGenerations = MaxGenerations;
 		}
 	}
 
@@ -244,20 +260,20 @@ namespace StockSharp.Algo.Testing
 				{
 					var l1Msg = (Level1ChangeMessage)message;
 
-					var value = l1Msg.Changes.TryGetValue(Level1Fields.LastTradePrice);
+					var value = l1Msg.TryGetDecimal(Level1Fields.LastTradePrice);
 
 					if (value != null)
-						_lastTradePrice = (decimal)value;
+						_lastTradePrice = value.Value;
 
-					value = l1Msg.Changes.TryGetValue(Level1Fields.BestBidPrice);
-
-					if (value != null)
-						_bestBidPrice = (decimal)value;
-
-					value = l1Msg.Changes.TryGetValue(Level1Fields.BestAskPrice);
+					value = l1Msg.TryGetDecimal(Level1Fields.BestBidPrice);
 
 					if (value != null)
-						_bestAskPrice = (decimal)value;
+						_bestBidPrice = value.Value;
+
+					value = l1Msg.TryGetDecimal(Level1Fields.BestAskPrice);
+
+					if (value != null)
+						_bestAskPrice = value.Value;
 
 					time = l1Msg.ServerTime;
 
@@ -447,22 +463,9 @@ namespace StockSharp.Algo.Testing
 		/// <returns>Copy.</returns>
 		public override MarketDataGenerator Clone()
 		{
-			return new TrendMarketDepthGenerator(SecurityId)
-			{
-				MaxVolume = MaxVolume,
-				MinVolume = MinVolume,
-				MaxPriceStepCount = MaxPriceStepCount,
-				Interval = Interval,
-				Volumes = Volumes,
-				Steps = Steps,
-
-				UseTradeVolume = UseTradeVolume,
-				MinSpreadStepCount = MinSpreadStepCount,
-				MaxSpreadStepCount = MaxSpreadStepCount,
-				MaxBidsDepth = MaxBidsDepth,
-				MaxAsksDepth = MaxAsksDepth,
-				MaxGenerations = MaxGenerations,
-			};
+			var clone = new TrendMarketDepthGenerator(SecurityId);
+			CopyTo(clone);
+			return clone;
 		}
 	}
 }

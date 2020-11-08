@@ -16,6 +16,7 @@ Copyright 2010 by StockSharp, LLC
 namespace StockSharp.Algo.Testing
 {
 	using System;
+	using System.Linq;
 	using System.Collections.Generic;
 
 	using Ecng.Common;
@@ -49,7 +50,7 @@ namespace StockSharp.Algo.Testing
 		/// <param name="portfolios">Portfolios, the operation will be performed with.</param>
 		/// <param name="storageRegistry">Market data storage.</param>
 		public HistoryEmulationConnector(IEnumerable<Security> securities, IEnumerable<Portfolio> portfolios, IStorageRegistry storageRegistry)
-			: this(new CollectionSecurityProvider(securities), new CollectionPortfolioProvider(portfolios), storageRegistry)
+			: this(new CollectionSecurityProvider(securities), new CollectionPortfolioProvider(portfolios), storageRegistry.CheckOnNull().ExchangeInfoProvider, storageRegistry)
 		{
 		}
 
@@ -59,7 +60,7 @@ namespace StockSharp.Algo.Testing
 		/// <param name="securityProvider">The provider of information about instruments.</param>
 		/// <param name="portfolios">Portfolios, the operation will be performed with.</param>
 		public HistoryEmulationConnector(ISecurityProvider securityProvider, IEnumerable<Portfolio> portfolios)
-			: this(securityProvider, new CollectionPortfolioProvider(portfolios), new StorageRegistry())
+			: this(securityProvider, new CollectionPortfolioProvider(portfolios), new InMemoryExchangeInfoProvider())
 		{
 		}
 
@@ -68,8 +69,9 @@ namespace StockSharp.Algo.Testing
 		/// </summary>
 		/// <param name="securityProvider">The provider of information about instruments.</param>
 		/// <param name="portfolioProvider">The portfolio to be used to register orders. If value is not given, the portfolio with default name Simulator will be created.</param>
-		public HistoryEmulationConnector(ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider)
-			: this(securityProvider, portfolioProvider, new StorageRegistry())
+		/// <param name="exchangeInfoProvider">Exchanges and trading boards provider.</param>
+		public HistoryEmulationConnector(ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider, IExchangeInfoProvider exchangeInfoProvider)
+			: this(securityProvider, portfolioProvider, exchangeInfoProvider, new StorageRegistry(exchangeInfoProvider))
 		{
 		}
 
@@ -79,8 +81,9 @@ namespace StockSharp.Algo.Testing
 		/// <param name="securityProvider">The provider of information about instruments.</param>
 		/// <param name="portfolioProvider">The portfolio to be used to register orders. If value is not given, the portfolio with default name Simulator will be created.</param>
 		/// <param name="storageRegistry">Market data storage.</param>
-		public HistoryEmulationConnector(ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider, IStorageRegistry storageRegistry)
-			: this(new HistoryMessageAdapter(new IncrementalIdGenerator(), securityProvider) { StorageRegistry = storageRegistry }, true, new InMemoryMessageChannel(new MessageByLocalTimeQueue(), "Emulator in", err => err.LogError()), securityProvider, portfolioProvider)
+		/// <param name="exchangeInfoProvider">Exchanges and trading boards provider.</param>
+		public HistoryEmulationConnector(ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider, IExchangeInfoProvider exchangeInfoProvider, IStorageRegistry storageRegistry)
+			: this(new HistoryMessageAdapter(new IncrementalIdGenerator(), securityProvider) { StorageRegistry = storageRegistry }, true, new InMemoryMessageChannel(new MessageByLocalTimeQueue(), "Emulator in", err => err.LogError()) { SuspendMaxCount = int.MaxValue }, securityProvider, portfolioProvider, exchangeInfoProvider)
 		{
 		}
 
@@ -92,8 +95,9 @@ namespace StockSharp.Algo.Testing
 		/// <param name="inChannel">Incoming messages channel.</param>
 		/// <param name="securityProvider">The provider of information about instruments.</param>
 		/// <param name="portfolioProvider">The portfolio to be used to register orders. If value is not given, the portfolio with default name Simulator will be created.</param>
-		public HistoryEmulationConnector(IMessageAdapter innerAdapter, bool ownInnerAdapter, IMessageChannel inChannel, ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider)
-			: base(new EmulationMessageAdapter(innerAdapter, inChannel, true, securityProvider, portfolioProvider) { OwnInnerAdapter = ownInnerAdapter }, false)
+		/// <param name="exchangeInfoProvider">Exchanges and trading boards provider.</param>
+		public HistoryEmulationConnector(IMessageAdapter innerAdapter, bool ownInnerAdapter, IMessageChannel inChannel, ISecurityProvider securityProvider, IPortfolioProvider portfolioProvider, IExchangeInfoProvider exchangeInfoProvider)
+			: base(new EmulationMessageAdapter(innerAdapter, inChannel, true, securityProvider, portfolioProvider, exchangeInfoProvider) { OwnInnerAdapter = ownInnerAdapter }, false, false)
 		{
 			MarketTimeChangedInterval = HistoryMessageAdapter.MarketTimeChangedInterval;
 
@@ -101,6 +105,8 @@ namespace StockSharp.Algo.Testing
 			Adapter.CommissionManager = null;
 			Adapter.PnLManager = null;
 			Adapter.SlippageManager = null;
+
+			Adapter.SupportSecurityAll = false;
 
 			Adapter.SendFinishedCandlesImmediatelly = true;
 
@@ -120,6 +126,7 @@ namespace StockSharp.Algo.Testing
 			Adapter.ConnectDisconnectEventOnFirstAdapter = false;
 
 			MarketTimeChanged += OnMarketTimeChanged;
+			Disconnected += OnDisconnected;
 		}
 
 		/// <inheritdoc />
@@ -128,17 +135,20 @@ namespace StockSharp.Algo.Testing
 		/// <inheritdoc />
 		public override bool SupportBasketSecurities => true;
 
+		/// <inheritdoc />
+		public override bool SupportSnapshots => false;
+
 		/// <summary>
 		/// The adapter, receiving messages form the storage <see cref="IStorageRegistry"/>.
 		/// </summary>
 		public HistoryMessageAdapter HistoryMessageAdapter => EmulationAdapter.FindAdapter<HistoryMessageAdapter>();
 
-		private EmulationStates _state = EmulationStates.Stopped;
+		private ChannelStates _state = ChannelStates.Stopped;
 
 		/// <summary>
 		/// The emulator state.
 		/// </summary>
-		public EmulationStates State
+		public ChannelStates State
 		{
 			get => _state;
 			private set
@@ -146,49 +156,53 @@ namespace StockSharp.Algo.Testing
 				if (_state == value)
 					return;
 
+				if (!EmulationAdapter.OwnInnerAdapter && _state == ChannelStates.Stopped && value == ChannelStates.Stopping)
+					return;
+
 				bool throwError;
+
+				var channel = EmulationAdapter.InChannel;
 
 				switch (value)
 				{
-					case EmulationStates.Stopped:
-						throwError = _state != EmulationStates.Stopping;
+					case ChannelStates.Stopped:
+						throwError = _state != ChannelStates.Stopping;
 
-						if (EmulationAdapter.OwnInnerAdapter)
-							EmulationAdapter.InChannel.Close();
+						//if (EmulationAdapter.OwnInnerAdapter)
+							if (!EmulationAdapter.OwnInnerAdapter && channel is InMemoryMessageChannel inMem)
+								inMem.Disabled = true;
+
+							channel.Close();
 
 						break;
-					case EmulationStates.Stopping:
-						throwError = _state != EmulationStates.Started && _state != EmulationStates.Suspended
-							&& State != EmulationStates.Starting;  // при ошибках при запуске эмуляции состояние может быть Starting
+					case ChannelStates.Stopping:
+						throwError = _state != ChannelStates.Started && _state != ChannelStates.Suspended
+							&& _state != ChannelStates.Starting;  // при ошибках при запуске эмуляции состояние может быть Starting
 
-						if (EmulationAdapter.OwnInnerAdapter)
+						//if (EmulationAdapter.OwnInnerAdapter)
 						{
-							EmulationAdapter.InChannel.Clear();
+							channel.Clear();
 
-							if (_state == EmulationStates.Suspended)
-								EmulationAdapter.InChannel.Resume();
+							if (_state == ChannelStates.Suspended)
+								channel.Resume();
 						}
 
 						break;
-					case EmulationStates.Starting:
-						throwError = _state != EmulationStates.Stopped && _state != EmulationStates.Suspended;
-
-						if (EmulationAdapter.OwnInnerAdapter && _state == EmulationStates.Suspended)
-							EmulationAdapter.InChannel.Resume();
-
+					case ChannelStates.Starting:
+						throwError = _state != ChannelStates.Stopped && _state != ChannelStates.Suspended;
 						break;
-					case EmulationStates.Started:
-						throwError = _state != EmulationStates.Starting;
+					case ChannelStates.Started:
+						throwError = _state != ChannelStates.Starting;
 						break;
-					case EmulationStates.Suspending:
-						throwError = _state != EmulationStates.Started;
-
-						if (EmulationAdapter.OwnInnerAdapter)
-							EmulationAdapter.InChannel.Suspend();
-
+					case ChannelStates.Suspending:
+						throwError = _state != ChannelStates.Started;
 						break;
-					case EmulationStates.Suspended:
-						throwError = _state != EmulationStates.Suspending;
+					case ChannelStates.Suspended:
+						throwError = _state != ChannelStates.Suspending;
+
+						//if (EmulationAdapter.OwnInnerAdapter)
+							channel.Suspend();
+
 						break;
 					default:
 						throw new ArgumentOutOfRangeException(nameof(value), value, LocalizedStrings.Str1219);
@@ -197,6 +211,7 @@ namespace StockSharp.Algo.Testing
 				if (throwError)
 					throw new InvalidOperationException(LocalizedStrings.Str2189Params.Put(_state, value));
 
+				this.AddInfoLog(LocalizedStrings.Str1121Params, _state, value);
 				_state = value;
 
 				try
@@ -272,25 +287,28 @@ namespace StockSharp.Algo.Testing
 			_nextTime = _startTime + _progressStep;
 
 			base.OnConnect();
-
-			if (!EmulationAdapter.OwnInnerAdapter)
-			{
-				SendEmulationState(EmulationStates.Starting);
-				SendEmulationState(EmulationStates.Started);
-			}
 		}
 
 		/// <inheritdoc />
 		protected override void OnDisconnect()
 		{
-			if (State != EmulationStates.Stopped && State != EmulationStates.Stopping)
-				SendEmulationState(EmulationStates.Stopping);
+			if (/*EmulationAdapter.OwnInnerAdapter && */State == ChannelStates.Suspended)
+				EmulationAdapter.InChannel.Resume();
+
+			if (State != ChannelStates.Stopped && State != ChannelStates.Stopping)
+				SendEmulationState(ChannelStates.Stopping);
+		}
+
+		private void OnDisconnected()
+		{
+			State = ChannelStates.Stopped;
 		}
 
 		/// <inheritdoc />
 		protected override void DisposeManaged()
 		{
 			MarketTimeChanged -= OnMarketTimeChanged;
+			Disconnected -= OnDisconnected;
 
 			base.DisposeManaged();
 
@@ -302,7 +320,10 @@ namespace StockSharp.Algo.Testing
 		/// </summary>
 		public void Start()
 		{
-			SendEmulationState(EmulationStates.Starting);
+			if (/*EmulationAdapter.OwnInnerAdapter && */State == ChannelStates.Suspended)
+				EmulationAdapter.InChannel.Resume();
+
+			SendEmulationState(ChannelStates.Starting);
 		}
 
 		/// <summary>
@@ -310,15 +331,17 @@ namespace StockSharp.Algo.Testing
 		/// </summary>
 		public void Suspend()
 		{
-			SendEmulationState(EmulationStates.Suspending);
+			SendEmulationState(ChannelStates.Suspending);
 		}
 
-		private void SendEmulationState(EmulationStates state)
+		private void SendEmulationState(ChannelStates state)
 		{
+			var message = new EmulationStateMessage { State = state };
+
 			if (EmulationAdapter.OwnInnerAdapter)
-				SendInMessage(new EmulationStateMessage { State = state });
+				SendInMessage(message);
 			else
-				ProcessEmulationStateMessage(state);
+				ProcessEmulationStateMessage(message);
 		}
 
 		/// <inheritdoc />
@@ -328,39 +351,12 @@ namespace StockSharp.Algo.Testing
 			{
 				switch (message.Type)
 				{
-					case ExtendedMessageTypes.Last:
-					{
-						var lastMsg = (LastMessage)message;
-
-						if (State == EmulationStates.Started)
-						{
-							IsFinished = !lastMsg.IsError;
-
-							// все данные пришли без ошибок или в процессе чтения произошла ошибка - начинаем остановку
-							SendEmulationState(EmulationStates.Stopping);
-						}
-
-						if (State == EmulationStates.Stopping)
-						{
-							// тестирование было отменено и пришли все ранее прочитанные данные
-							SendEmulationState(EmulationStates.Stopped);
-						}
-
-						break;
-					}
-
-					//case ExtendedMessageTypes.Clearing:
-					//	break;
-
 					case ExtendedMessageTypes.EmulationState:
-						ProcessEmulationStateMessage(((EmulationStateMessage)message).State);
+						ProcessEmulationStateMessage((EmulationStateMessage)message);
 						break;
 
 					default:
 					{
-						if (State == EmulationStates.Stopping && message.Type != MessageTypes.Disconnect)
-							break;
-
 						base.OnProcessMessage(message);
 						break;
 					}
@@ -373,39 +369,35 @@ namespace StockSharp.Algo.Testing
 			}
 		}
 
-		private void ProcessEmulationStateMessage(EmulationStates newState)
+		private void ProcessEmulationStateMessage(EmulationStateMessage message)
 		{
-			this.AddInfoLog(LocalizedStrings.Str1121Params, State, newState);
+			State = message.State;
 
-			State = newState;
-
-			switch (newState)
+			switch (State)
 			{
-				case EmulationStates.Stopping:
+				case ChannelStates.Stopping:
 				{
-					SendEmulationState(EmulationStates.Stopped);
-					break;
-				}
-
-				case EmulationStates.Stopped:
-				{
+					IsFinished = message.Error == null;
+					
 					// change ConnectionState to Disconnecting
 					if (ConnectionState != ConnectionStates.Disconnecting)
 						Disconnect();
 
-					SendInMessage(new DisconnectMessage());
+					// base method cannot be invoked from OnDisconnect HistConnector.OnDisconnect
+					base.OnDisconnect();
+
 					break;
 				}
 
-				case EmulationStates.Starting:
+				case ChannelStates.Starting:
 				{
-					SendEmulationState(EmulationStates.Started);
+					State = ChannelStates.Started;
 					break;
 				}
 
-				case EmulationStates.Suspending:
+				case ChannelStates.Suspending:
 				{
-					SendEmulationState(EmulationStates.Suspended);
+					State = ChannelStates.Suspended;
 					break;
 				}
 			}
@@ -417,10 +409,21 @@ namespace StockSharp.Algo.Testing
 		/// <param name="security">Instrument. If passed <see langword="null"/> the source will be applied for all subscriptions.</param>
 		/// <param name="dataType">Data type.</param>
 		/// <param name="getMessages">Historical data source.</param>
+		/// <returns>Subscription.</returns>
 		[Obsolete("Uses custom adapter implementation.")]
-		public void RegisterHistorySource(Security security, DataType dataType, Func<DateTimeOffset, IEnumerable<Message>> getMessages)
+		public Subscription RegisterHistorySource(Security security, DataType dataType, Func<DateTimeOffset, IEnumerable<Message>> getMessages)
 		{
-			SendInHistorySourceMessage(security, dataType, getMessages);
+			var subscription = new Subscription(new HistorySourceMessage
+			{
+				IsSubscribe = true,
+				SecurityId = security?.ToSecurityId(copyExtended: true) ?? default,
+				DataType2 = dataType,
+				GetMessages = getMessages
+			}, security);
+
+			Subscribe(subscription);
+
+			return subscription;
 		}
 
 		/// <summary>
@@ -428,21 +431,17 @@ namespace StockSharp.Algo.Testing
 		/// </summary>
 		/// <param name="security">Instrument. If passed <see langword="null"/> the source will be removed for all subscriptions.</param>
 		/// <param name="dataType">Data type.</param>
-		[Obsolete]
+		[Obsolete("Uses UnSubscribe method.")]
 		public void UnRegisterHistorySource(Security security, DataType dataType)
 		{
-			SendInHistorySourceMessage(security, dataType, null);
-		}
-
-		private void SendInHistorySourceMessage(Security security, DataType dataType, Func<DateTimeOffset, IEnumerable<Message>> getMessages)
-		{
-			SendInMessage(new HistorySourceMessage
-			{
-				IsSubscribe = getMessages != null,
-				SecurityId = security?.ToSecurityId(copyExtended: true) ?? default,
-				DataType2 = dataType,
-				GetMessages = getMessages
-			});
+			var secId = security?.ToSecurityId();
+			
+			var subscription = Subscriptions.FirstOrDefault(s => s.SubscriptionMessage is HistorySourceMessage sourceMsg && sourceMsg.SecurityId == secId && sourceMsg.DataType2 == dataType);
+			
+			if (subscription != null)
+				UnSubscribe(subscription);
+			else
+				this.AddWarningLog(LocalizedStrings.SubscriptionNonExist, dataType);
 		}
 	}
 }

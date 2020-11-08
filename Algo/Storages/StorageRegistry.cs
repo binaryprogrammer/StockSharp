@@ -45,7 +45,17 @@ namespace StockSharp.Algo.Storages
 		/// Initializes a new instance of the <see cref="StorageRegistry"/>.
 		/// </summary>
 		public StorageRegistry()
+			: this(new InMemoryExchangeInfoProvider())
 		{
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="StorageRegistry"/>.
+		/// </summary>
+		/// <param name="exchangeInfoProvider">Exchanges and trading boards provider.</param>
+		public StorageRegistry(IExchangeInfoProvider exchangeInfoProvider)
+		{
+			ExchangeInfoProvider = exchangeInfoProvider ?? throw new ArgumentNullException(nameof(exchangeInfoProvider));
 		}
 
 		/// <summary>
@@ -76,14 +86,8 @@ namespace StockSharp.Algo.Storages
 			}
 		}
 
-		private IExchangeInfoProvider _exchangeInfoProvider = new InMemoryExchangeInfoProvider();
-
 		/// <inheritdoc />
-		public IExchangeInfoProvider ExchangeInfoProvider
-		{
-			get => _exchangeInfoProvider;
-			set => _exchangeInfoProvider = value ?? throw new ArgumentNullException(nameof(value));
-		}
+		public IExchangeInfoProvider ExchangeInfoProvider { get; }
 
 		/// <inheritdoc />
 		public void RegisterTradeStorage(IMarketDataStorage<ExecutionMessage> storage)
@@ -196,7 +200,7 @@ namespace StockSharp.Algo.Storages
 			if (securityId == default)
 				throw new ArgumentNullException(nameof(securityId));
 
-			return _depthStorages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, typeof(QuoteChangeMessage), null, format)), key =>
+			return _depthStorages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, DataType.MarketDepth, format)), key =>
 			{
 				IMarketDataSerializer<QuoteChangeMessage> serializer;
 
@@ -234,7 +238,7 @@ namespace StockSharp.Algo.Storages
 			if (securityId == default)
 				throw new ArgumentNullException(nameof(securityId));
 
-			return _level1Storages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, typeof(Level1ChangeMessage), null, format)), key =>
+			return _level1Storages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, DataType.Level1, format)), key =>
 			{
 				//if (security.Board == ExchangeBoard.Associated)
 				//	return new AllSecurityMarketDataStorage<Level1ChangeMessage>(security, null, md => md.ServerTime, md => ToSecurity(md.SecurityId), (s, d) => GetLevel1MessageStorage(s, d, format), key.Item2, ExchangeInfoProvider);
@@ -263,7 +267,7 @@ namespace StockSharp.Algo.Storages
 			if (securityId == default)
 				throw new ArgumentNullException(nameof(securityId));
 
-			return _positionStorages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, typeof(PositionChangeMessage), null, format)), key =>
+			return _positionStorages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, DataType.PositionChanges, format)), key =>
 			{
 				//if (security.Board == ExchangeBoard.Associated)
 				//	return new AllSecurityMarketDataStorage<Level1ChangeMessage>(security, null, md => md.ServerTime, md => ToSecurity(md.SecurityId), (s, d) => GetLevel1MessageStorage(s, d, format), key.Item2, ExchangeInfoProvider);
@@ -301,7 +305,7 @@ namespace StockSharp.Algo.Storages
 			if (arg.IsNull(true))
 				throw new ArgumentNullException(nameof(arg), LocalizedStrings.EmptyCandleArg);
 
-			return _candleStorages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, candleMessageType, arg, format)), key =>
+			return _candleStorages.SafeAdd(Tuple.Create(securityId, (drive ?? DefaultDrive).GetStorageDrive(securityId, DataType.Create(candleMessageType, arg), format)), key =>
 			{
 				IMarketDataSerializer serializer;
 
@@ -327,7 +331,7 @@ namespace StockSharp.Algo.Storages
 			if (securityId == default)
 				throw new ArgumentNullException(nameof(securityId));
 
-			return _executionStorages.SafeAdd(Tuple.Create(securityId, type, (drive ?? DefaultDrive).GetStorageDrive(securityId, typeof(ExecutionMessage), type, format)), key =>
+			return _executionStorages.SafeAdd(Tuple.Create(securityId, type, (drive ?? DefaultDrive).GetStorageDrive(securityId, DataType.Create(typeof(ExecutionMessage), type), format)), key =>
 			{
 				var secId = key.Item1;
 				var mdDrive = key.Item3;
@@ -418,6 +422,8 @@ namespace StockSharp.Algo.Storages
 				return GetQuoteMessageStorage(securityId, drive, format);
 			else if (dataType == typeof(NewsMessage))
 				return GetNewsMessageStorage(drive, format);
+			else if (dataType == typeof(BoardStateMessage))
+				return GetBoardStateMessageStorage(drive, format);
 			else if (dataType.IsCandleMessage())
 				return GetCandleMessageStorage(dataType, securityId, arg, drive, format);
 			else
@@ -429,7 +435,7 @@ namespace StockSharp.Algo.Storages
 		{
 			var securityId = SecurityId.News;
 
-			return _newsStorages.SafeAdd((drive ?? DefaultDrive).GetStorageDrive(securityId, typeof(NewsMessage), null, format), key =>
+			return _newsStorages.SafeAdd((drive ?? DefaultDrive).GetStorageDrive(securityId, DataType.News, format), key =>
 			{
 				IMarketDataSerializer<NewsMessage> serializer;
 
@@ -452,9 +458,7 @@ namespace StockSharp.Algo.Storages
 		/// <inheritdoc />
 		public IMarketDataStorage<BoardStateMessage> GetBoardStateMessageStorage(IMarketDataDrive drive = null, StorageFormats format = StorageFormats.Binary)
 		{
-			var securityId = SecurityId.All;
-
-			return _boardStateStorages.SafeAdd((drive ?? DefaultDrive).GetStorageDrive(securityId, typeof(BoardStateMessage), null, format), key =>
+			return _boardStateStorages.SafeAdd((drive ?? DefaultDrive).GetStorageDrive(default, DataType.BoardState, format), key =>
 			{
 				IMarketDataSerializer<BoardStateMessage> serializer;
 
@@ -470,7 +474,7 @@ namespace StockSharp.Algo.Storages
 						throw new ArgumentOutOfRangeException(nameof(format), format, LocalizedStrings.Str1219);
 				}
 
-				return new BoardStateStorage(securityId, serializer, key);
+				return new BoardStateStorage(default, serializer, key);
 			});
 		}
 	}

@@ -331,6 +331,9 @@ namespace StockSharp.Algo
 				period = period.Min(HeartbeatInterval);
 			}
 
+			var outMsgIntervalInitial = TimeSpan.FromSeconds(5);
+			var outMsgInterval = outMsgIntervalInitial;
+
 			_timer = ThreadingHelper
 			    .Timer(() =>
 			    {
@@ -354,6 +357,14 @@ namespace StockSharp.Algo
 					    }
 
 					    ProcessReconnection(diff);
+
+						outMsgInterval -= diff;
+
+						if (outMsgInterval <= TimeSpan.Zero)
+						{
+							outMsgInterval = outMsgIntervalInitial;
+							RaiseNewOutMessage(new TimeMessage { LocalTime = CurrentTime });
+						}
 
 					    time = now;
 				    }
@@ -446,7 +457,7 @@ namespace StockSharp.Algo
 					if (_connectionTimeOut > TimeSpan.Zero)
 						break;
 
-					if (_reConnectionSettings.WorkingTime.IsTradeTime(TimeHelper.Now, out _))
+					if (_reConnectionSettings.WorkingTime.IsTradeTime(TimeHelper.Now, out _, out _))
 					{
 						this.AddInfoLog("RCM: To Connecting. CurrState {0} PrevState {1} Attempts {2}.", FormatState(_currState), FormatState(_prevState), _connectingAttemptCount);
 

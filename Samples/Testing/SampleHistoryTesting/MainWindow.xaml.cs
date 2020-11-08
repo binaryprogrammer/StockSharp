@@ -26,7 +26,6 @@ namespace SampleHistoryTesting
 	using Ecng.Xaml;
 	using Ecng.Common;
 	using Ecng.Collections;
-	using Ecng.Localization;
 
 	using StockSharp.Algo;
 	using StockSharp.Algo.Candles;
@@ -131,7 +130,7 @@ namespace SampleHistoryTesting
 				return;
 			}
 
-			if (_connectors.Any(t => t.State != EmulationStates.Stopped))
+			if (_connectors.Any(t => t.State != ChannelStates.Stopped))
 			{
 				MessageBox.Show(this, LocalizedStrings.Str3015);
 				return;
@@ -466,14 +465,16 @@ namespace SampleHistoryTesting
 				if (emulationInfo.CustomHistoryAdapter != null)
 				{
 					connector.Adapter.InnerAdapters.Remove(connector.MarketDataAdapter);
-					connector.Adapter.InnerAdapters.Add(new EmulationMessageAdapter(emulationInfo.CustomHistoryAdapter(connector.TransactionIdGenerator), new InMemoryMessageChannel(new MessageByLocalTimeQueue(), "History out", err => err.LogError()), true, connector.EmulationAdapter.Emulator.SecurityProvider, connector.EmulationAdapter.Emulator.PortfolioProvider));
+
+					var emu = connector.EmulationAdapter.Emulator;
+					connector.Adapter.InnerAdapters.Add(new EmulationMessageAdapter(emulationInfo.CustomHistoryAdapter(connector.TransactionIdGenerator), new InMemoryMessageChannel(new MessageByLocalTimeQueue(), "History out", err => err.LogError()), true, emu.SecurityProvider, emu.PortfolioProvider, emu.ExchangeInfoProvider));
 				}
 
 				// set history range
 				connector.HistoryMessageAdapter.StartDate = startTime;
 				connector.HistoryMessageAdapter.StopDate = stopTime;
 
-				connector.NewSecurity += s =>
+				connector.SecurityReceived += (subscr, s) =>
 				{
 					if (s != security)
 						return;
@@ -570,13 +571,13 @@ namespace SampleHistoryTesting
 
 				connector.StateChanged += () =>
 				{
-					if (connector.State == EmulationStates.Stopped)
+					if (connector.State == ChannelStates.Stopped)
 					{
 						strategy.Stop();
 
 						SetIsChartEnabled(chart, false);
 
-						if (_connectors.All(c => c.State == EmulationStates.Stopped))
+						if (_connectors.All(c => c.State == ChannelStates.Stopped))
 						{
 							logManager.Dispose();
 							_connectors.Clear();
@@ -595,16 +596,16 @@ namespace SampleHistoryTesting
 								MessageBox.Show(this, LocalizedStrings.cancelled, title);
 						});
 					}
-					else if (connector.State == EmulationStates.Started)
+					else if (connector.State == ChannelStates.Started)
 					{
-						if (_connectors.All(c => c.State == EmulationStates.Started))
+						if (_connectors.All(c => c.State == ChannelStates.Started))
 							SetIsEnabled(false, true, true);
 
 						SetIsChartEnabled(chart, true);
 					}
-					else if (connector.State == EmulationStates.Suspended)
+					else if (connector.State == ChannelStates.Suspended)
 					{
-						if (_connectors.All(c => c.State == EmulationStates.Suspended))
+						if (_connectors.All(c => c.State == ChannelStates.Suspended))
 							SetIsEnabled(true, false, true);
 					}
 				};

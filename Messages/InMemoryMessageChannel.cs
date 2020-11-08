@@ -39,7 +39,6 @@ namespace StockSharp.Messages
 		private readonly IMessageQueue _queue;
 		private readonly Action<Exception> _errorHandler;
 
-		private bool _isSuspended;
 		private readonly SyncObject _suspendLock = new SyncObject();
 
 		private int _version;
@@ -59,8 +58,8 @@ namespace StockSharp.Messages
 
 			_queue = queue ?? throw new ArgumentNullException(nameof(queue));
 			_errorHandler = errorHandler ?? throw new ArgumentNullException(nameof(errorHandler));
-			
-			Close();
+
+			_queue.Close();
 		}
 
 		/// <summary>
@@ -119,8 +118,26 @@ namespace StockSharp.Messages
 			}
 		}
 
+		/// <summary>
+		/// The channel cannot be opened.
+		/// </summary>
+		public bool Disabled { get; set; }
+
+		private ChannelStates _state = ChannelStates.Stopped;
+
 		/// <inheritdoc />
-		public bool IsOpened => !_queue.IsClosed;
+		public ChannelStates State
+		{
+			get => _state;
+			private set
+			{
+				if (_state == value)
+					return;
+
+				_state = value;
+				StateChanged?.Invoke();
+			}
+		}
 
 		/// <inheritdoc />
 		public event Action StateChanged;
@@ -128,26 +145,29 @@ namespace StockSharp.Messages
 		/// <inheritdoc />
 		public void Open()
 		{
+			if (Disabled)
+				return;
+
+			State = ChannelStates.Started;
 			_queue.Open();
-			StateChanged?.Invoke();
 
 			var version = Interlocked.Increment(ref _version);
 
 			ThreadingHelper
 				.Thread(() => CultureInfo.InvariantCulture.DoInCulture(() =>
 				{
-					while (IsOpened)
+					while (this.IsOpened())
 					{
 						try
 						{
 							if (!_queue.TryDequeue(out var message))
 								break;
 
-							if (_isSuspended)
+							if (State == ChannelStates.Suspended)
 							{
 								_suspendLock.Wait();
 
-								if (!IsOpened)
+								if (!this.IsOpened())
 									break;
 							}
 
@@ -163,8 +183,7 @@ namespace StockSharp.Messages
 						}
 					}
 
-					//Closed?.Invoke();
-					StateChanged?.Invoke();
+					State = ChannelStates.Stopped;
 				}))
 				.Name($"{Name} channel thread.")
 				//.Culture(CultureInfo.InvariantCulture)
@@ -174,22 +193,23 @@ namespace StockSharp.Messages
 		/// <inheritdoc />
 		public void Close()
 		{
+			State = ChannelStates.Stopping;
+
 			_queue.Close();
 			_queue.Clear();
 
-			_isSuspended = false;
 			_suspendLock.Pulse();
 		}
 
 		void IMessageChannel.Suspend()
 		{
-			_isSuspended = true;
+			State = ChannelStates.Suspended;
 		}
 
 		void IMessageChannel.Resume()
 		{
-			_isSuspended = false;
-			_suspendLock.Pulse();
+			State = ChannelStates.Started;
+			_suspendLock.PulseAll();
 		}
 
 		void IMessageChannel.Clear()
@@ -200,14 +220,17 @@ namespace StockSharp.Messages
 		/// <inheritdoc />
 		public bool SendInMessage(Message message)
 		{
-			if (!IsOpened)
-				throw new InvalidOperationException();
+			if (!this.IsOpened())
+			{
+				//throw new InvalidOperationException();
+				return false;
+			}
 
-			if (_isSuspended)
+			if (State == ChannelStates.Suspended)
 			{
 				_suspendLock.Wait();
 
-				if (!IsOpened)
+				if (!this.IsOpened())
 					return false;
 			}
 
@@ -229,7 +252,12 @@ namespace StockSharp.Messages
 		/// <returns>Copy.</returns>
 		public virtual IMessageChannel Clone()
 		{
-			return new InMemoryMessageChannel(_queue, Name, _errorHandler) { MaxMessageCount = MaxMessageCount };
+			return new InMemoryMessageChannel(_queue, Name, _errorHandler)
+			{
+				MaxMessageCount = MaxMessageCount,
+				SuspendMaxCount = SuspendMaxCount,
+				SuspendTimeout = SuspendTimeout,
+			};
 		}
 
 		object ICloneable.Clone()

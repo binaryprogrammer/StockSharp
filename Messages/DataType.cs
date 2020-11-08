@@ -1,6 +1,8 @@
 namespace StockSharp.Messages
 {
 	using System;
+	using System.Runtime.Serialization;
+	using System.Collections.Generic;
 
 	using Ecng.Common;
 	using Ecng.ComponentModel;
@@ -11,6 +13,8 @@ namespace StockSharp.Messages
 	/// <summary>
 	/// Data type info.
 	/// </summary>
+	[System.Runtime.Serialization.DataContract]
+	[Serializable]
 	public class DataType : Equatable<DataType>, IPersistable
 	{
 		/// <summary>
@@ -20,11 +24,22 @@ namespace StockSharp.Messages
 		/// <param name="arg">The additional argument, associated with data. For example, candle argument.</param>
 		/// <returns>Data type info.</returns>
 		public static DataType Create(Type messageType, object arg)
+			=> Create(messageType, arg, false);
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="DataType"/>.
+		/// </summary>
+		/// <param name="messageType">Message type.</param>
+		/// <param name="arg">The additional argument, associated with data. For example, candle argument.</param>
+		/// <param name="isSecurityRequired">Is the data type required security info.</param>
+		/// <returns>Data type info.</returns>
+		public static DataType Create(Type messageType, object arg, bool isSecurityRequired)
 		{
 			return new DataType
 			{
 				MessageType = messageType,
-				Arg = arg
+				Arg = arg,
+				_isSecurityRequired = isSecurityRequired,
 			};
 		}
 
@@ -49,6 +64,11 @@ namespace StockSharp.Messages
 		/// Market depth.
 		/// </summary>
 		public static DataType MarketDepth { get; } = Create(typeof(QuoteChangeMessage), null).Immutable();
+
+		/// <summary>
+		/// Filtered market depth.
+		/// </summary>
+		public static DataType FilteredMarketDepth { get; } = Create(typeof(QuoteChangeMessage), ExecutionTypes.Transaction).Immutable();
 
 		/// <summary>
 		/// Position changes.
@@ -156,6 +176,11 @@ namespace StockSharp.Messages
 		public static DataType SecurityMapping { get; } = Create(typeof(SecurityMappingInfoMessage), null).Immutable();
 
 		/// <summary>
+		/// <see cref="CommandMessage"/>.
+		/// </summary>
+		public static DataType Command { get; } = Create(typeof(CommandMessage), null);
+
+		/// <summary>
 		/// Create data type info for <see cref="TimeFrameCandleMessage"/>.
 		/// </summary>
 		/// <param name="tf">Candle arg.</param>
@@ -180,6 +205,7 @@ namespace StockSharp.Messages
 		/// <summary>
 		/// Message type.
 		/// </summary>
+		[DataMember]
 		public Type MessageType
 		{
 			get => _messageType;
@@ -198,6 +224,7 @@ namespace StockSharp.Messages
 		/// <summary>
 		/// The additional argument, associated with data. For example, candle argument.
 		/// </summary>
+		[DataMember]
 		public object Arg
 		{
 			get => _arg;
@@ -244,8 +271,25 @@ namespace StockSharp.Messages
 			return new DataType
 			{
 				MessageType = MessageType,
-				Arg = Arg
+				Arg = Arg,
+				_isSecurityRequired = _isSecurityRequired,
 			};
+		}
+
+		/// <summary>
+		/// Name.
+		/// </summary>
+		public string Name { get; set; }
+
+		/// <summary>
+		/// Set <see cref="Name"/>.
+		/// </summary>
+		/// <param name="name">Name.</param>
+		/// <returns>Data type info.</returns>
+		public DataType SetName(string name)
+		{
+			Name = name;
+			return this;
 		}
 
 		/// <inheritdoc />
@@ -259,6 +303,8 @@ namespace StockSharp.Messages
 				return LocalizedStrings.OrderLog;
 			else if (this == MarketDepth)
 				return LocalizedStrings.MarketDepth;
+			else if (this == FilteredMarketDepth)
+				return LocalizedStrings.FilteredBook;
 			else if (this == Transactions)
 				return LocalizedStrings.Transactions;
 			else if (this == PositionChanges)
@@ -268,7 +314,14 @@ namespace StockSharp.Messages
 			else if (this == Securities)
 				return LocalizedStrings.Securities;
 			else
-				return $"{MessageType.GetDisplayName()}: {Arg}";
+			{
+				var name = Name;
+
+				if (name.IsEmpty())
+					name = $"{MessageType.GetDisplayName()}: {Arg}";
+
+				return name;
+			}
 		}
 
 		/// <summary>
@@ -294,16 +347,29 @@ namespace StockSharp.Messages
 			this == SecurityMapping	||
 			this == TimeFrames;
 
+		private bool _isSecurityRequired;
+
 		/// <summary>
 		/// Is the data type required security info.
 		/// </summary>
 		public bool IsSecurityRequired =>
-			IsCandles			||
-			this == MarketDepth ||
-			this == Level1		||
-			this == Securities	||
-			this == Ticks		||
+			_isSecurityRequired			||
+			IsCandles					||
+			this == MarketDepth			||
+			this == FilteredMarketDepth ||
+			this == Level1				||
+			this == Ticks				||
 			this == OrderLog;
+
+		/// <summary>
+		/// Is the data type can be used as candles compression source.
+		/// </summary>
+		public bool IsCandleSource => CandleSources.Contains(this);
+
+		/// <summary>
+		/// Possible data types that can be used as candles source.
+		/// </summary>
+		public static ISet<DataType> CandleSources { get; } = new HashSet<DataType>(new[] { Ticks, Level1, MarketDepth, OrderLog });
 
 		/// <summary>
 		/// Load settings.
@@ -315,6 +381,9 @@ namespace StockSharp.Messages
 
 			if (storage.ContainsKey(nameof(Arg)))
 				Arg = storage.GetValue<object>(nameof(Arg));
+
+			if (storage.ContainsKey(nameof(IsSecurityRequired)))
+				_isSecurityRequired = storage.GetValue<bool>(nameof(IsSecurityRequired));
 		}
 
 		/// <summary>
@@ -327,6 +396,9 @@ namespace StockSharp.Messages
 
 			if (Arg != null)
 				storage.SetValue(nameof(Arg), Arg);
+
+			if (_isSecurityRequired)
+				storage.SetValue(nameof(IsSecurityRequired), true);
 		}
 	}
 }

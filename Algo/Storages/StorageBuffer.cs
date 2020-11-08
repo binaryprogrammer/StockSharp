@@ -41,11 +41,11 @@ namespace StockSharp.Algo.Storages
 		private readonly DataBuffer<SecurityId, ExecutionMessage> _orderLogBuffer = new DataBuffer<SecurityId, ExecutionMessage>();
 		private readonly DataBuffer<SecurityId, Level1ChangeMessage> _level1Buffer = new DataBuffer<SecurityId, Level1ChangeMessage>();
 		private readonly DataBuffer<SecurityId, PositionChangeMessage> _positionChangesBuffer = new DataBuffer<SecurityId, PositionChangeMessage>();
-		private readonly DataBuffer<Tuple<SecurityId, Type, object>, CandleMessage> _candleBuffer = new DataBuffer<Tuple<SecurityId, Type, object>, CandleMessage>();
 		private readonly DataBuffer<SecurityId, ExecutionMessage> _transactionsBuffer = new DataBuffer<SecurityId, ExecutionMessage>();
+		private readonly SynchronizedSet<BoardStateMessage> _boardStatesBuffer = new SynchronizedSet<BoardStateMessage>();
+		private readonly DataBuffer<Tuple<SecurityId, Type, object>, CandleMessage> _candleBuffer = new DataBuffer<Tuple<SecurityId, Type, object>, CandleMessage>();
 		private readonly SynchronizedSet<NewsMessage> _newsBuffer = new SynchronizedSet<NewsMessage>();
 		private readonly SynchronizedSet<long> _subscriptionsById = new SynchronizedSet<long>();
-		private readonly SynchronizedDictionary<long, SecurityId> _securityIds = new SynchronizedDictionary<long, SecurityId>();
 
 		/// <summary>
 		/// Save data only for subscriptions.
@@ -58,6 +58,16 @@ namespace StockSharp.Algo.Storages
 		public bool Enabled { get; set; } = true;
 
 		/// <summary>
+		/// Enable positions storage.
+		/// </summary>
+		public bool EnabledPositions { get; set; }
+
+		/// <summary>
+		/// Enable transactions storage.
+		/// </summary>
+		public bool EnabledTransactions { get; set; } = true;
+
+		/// <summary>
 		/// Interpret tick messages as level1.
 		/// </summary>
 		public bool TicksAsLevel1 { get; set; } = true;
@@ -68,79 +78,149 @@ namespace StockSharp.Algo.Storages
 		public bool DisableStorageTimer { get; set; }
 
 		/// <summary>
-		/// Get accumulated ticks.
+		/// Ignore market-data messages with <see cref="IGeneratedMessage.BuildFrom"/> is not <see langword="null"/>.
+		/// </summary>
+		public bool IgnoreGeneratedMarketData { get; set; } = true;
+
+		/// <summary>
+		/// Ignore transactional messages with <see cref="IGeneratedMessage.BuildFrom"/> is not <see langword="null"/>.
+		/// </summary>
+		public bool IgnoreGeneratedTransactional { get; set; } = true;
+
+		/// <summary>
+		/// Get accumulated <see cref="ExecutionTypes.Tick"/>.
 		/// </summary>
 		/// <returns>Ticks.</returns>
 		public IDictionary<SecurityId, IEnumerable<ExecutionMessage>> GetTicks()
 			=> _ticksBuffer.Get();
 
 		/// <summary>
-		/// Get accumulated order log.
+		/// Get accumulated <see cref="ExecutionTypes.OrderLog"/>.
 		/// </summary>
 		/// <returns>Order log.</returns>
 		public IDictionary<SecurityId, IEnumerable<ExecutionMessage>> GetOrderLog()
 			=> _orderLogBuffer.Get();
 
 		/// <summary>
-		/// Get accumulated transactions.
+		/// Get accumulated <see cref="ExecutionTypes.Transaction"/>.
 		/// </summary>
 		/// <returns>Transactions.</returns>
 		public IDictionary<SecurityId, IEnumerable<ExecutionMessage>> GetTransactions()
 			=> _transactionsBuffer.Get();
 
 		/// <summary>
-		/// Get accumulated candles.
+		/// Get accumulated <see cref="CandleMessage"/>.
 		/// </summary>
 		/// <returns>Candles.</returns>
 		public IDictionary<Tuple<SecurityId, Type, object>, IEnumerable<CandleMessage>> GetCandles()
 			=> _candleBuffer.Get();
 
 		/// <summary>
-		/// Get accumulated level1.
+		/// Get accumulated <see cref="Level1ChangeMessage"/>.
 		/// </summary>
 		/// <returns>Level1.</returns>
 		public IDictionary<SecurityId, IEnumerable<Level1ChangeMessage>> GetLevel1()
 			=> _level1Buffer.Get();
 
 		/// <summary>
-		/// Get accumulated position changes.
+		/// Get accumulated <see cref="PositionChangeMessage"/>.
 		/// </summary>
 		/// <returns>Position changes.</returns>
 		public IDictionary<SecurityId, IEnumerable<PositionChangeMessage>> GetPositionChanges()
 			=> _positionChangesBuffer.Get();
 
 		/// <summary>
-		/// Get accumulated order books.
+		/// Get accumulated <see cref="QuoteChangeMessage"/>.
 		/// </summary>
 		/// <returns>Order books.</returns>
 		public IDictionary<SecurityId, IEnumerable<QuoteChangeMessage>> GetOrderBooks()
 			=> _orderBooksBuffer.Get();
 
 		/// <summary>
-		/// Get accumulated news.
+		/// Get accumulated <see cref="NewsMessage"/>.
 		/// </summary>
 		/// <returns>News.</returns>
 		public IEnumerable<NewsMessage> GetNews()
 			=> _newsBuffer.SyncGet(c => c.CopyAndClear());
 
-		private bool CanStore(ISubscriptionIdMessage message)
+		/// <summary>
+		/// Get accumulated <see cref="BoardStateMessage"/>.
+		/// </summary>
+		/// <returns>States.</returns>
+		public IEnumerable<BoardStateMessage> GetBoardStates()
+			=> _boardStatesBuffer.SyncGet(c => c.CopyAndClear());
+
+		private bool CanStore(Message message, bool canStore, bool ignoreGenerated)
+		{
+			if (!canStore)
+				return false;
+
+			if (ignoreGenerated && message is IGeneratedMessage genMsg)
+				return genMsg.BuildFrom == null;
+
+			return true;
+		}
+
+		private bool CanStore(Message message)
 		{
 			if (!Enabled)
 				return false;
 
-			if (!FilterSubscription)
-				return true;
+			static bool IsFailed(ExecutionMessage execMsg)
+				=> execMsg.OrderState == OrderStates.Failed && execMsg.TransactionId != default;
 
-			return message.GetSubscriptionIds().Any(_subscriptionsById.Contains);
+			if (!FilterSubscription)
+			{
+				if (message is ExecutionMessage execMsg && IsFailed(execMsg))
+					return false;
+
+				return true;
+			}
+
+			switch (message.Type)
+			{
+				case MessageTypes.Portfolio:
+				case MessageTypes.PositionChange:
+					return CanStore(message, EnabledPositions, IgnoreGeneratedTransactional);
+
+				case MessageTypes.OrderRegister:
+				case MessageTypes.OrderReplace:
+				case MessageTypes.OrderCancel:
+				case MessageTypes.OrderPairReplace:
+				case MessageTypes.OrderGroupCancel:
+					return CanStore(message, EnabledTransactions, IgnoreGeneratedTransactional);
+
+				case MessageTypes.Execution:
+				{
+					var execMsg = (ExecutionMessage)message;
+
+					if (execMsg.IsMarketData())
+						break;
+
+					// do not store cancellation commands into snapshot
+					if (execMsg.IsCancellation)
+						return false;
+
+					if (IsFailed(execMsg))
+						return false;
+
+					return CanStore(message, EnabledTransactions, IgnoreGeneratedTransactional);
+				}
+			}
+
+			if (message is ISubscriptionIdMessage subscrMsg)
+				return CanStore(message, subscrMsg.GetSubscriptionIds().Any(_subscriptionsById.Contains), IgnoreGeneratedMarketData);
+
+			return false;
 		}
 
 		/// <summary>
 		/// Process message.
 		/// </summary>
 		/// <param name="message">Message.</param>
-		public void ProcessMessage(Message message)
+		public void ProcessInMessage(Message message)
 		{
-			if (message == null)
+			if (message is null)
 				throw new ArgumentNullException(nameof(message));
 
 			if (message.OfflineMode != MessageOfflineModes.None)
@@ -148,19 +228,17 @@ namespace StockSharp.Algo.Storages
 
 			switch (message.Type)
 			{
-				// in message
 				case MessageTypes.Reset:
 				{
-					_subscriptionsById.Clear();
-
 					_ticksBuffer.Clear();
-					_level1Buffer.Clear();
-					_candleBuffer.Clear();
-					_orderLogBuffer.Clear();
 					_orderBooksBuffer.Clear();
-					_transactionsBuffer.Clear();
-					_newsBuffer.Clear();
+					_orderLogBuffer.Clear();
+					_level1Buffer.Clear();
 					_positionChangesBuffer.Clear();
+					_transactionsBuffer.Clear();
+					_candleBuffer.Clear();
+					_newsBuffer.Clear();
+					_subscriptionsById.Clear();
 
 					//SendOutMessage(new ResetMessage());
 					break;
@@ -169,71 +247,57 @@ namespace StockSharp.Algo.Storages
 				{
 					var regMsg = (OrderRegisterMessage)message;
 
-					//if (!CanStore<ExecutionMessage>(regMsg.SecurityId, ExecutionTypes.Transaction))
-					//	break;
+					if (!CanStore(regMsg))
+						break;
 
-					// try - cause looped back messages from offline adapter
-					_securityIds.TryAdd(regMsg.TransactionId, regMsg.SecurityId);
-
-					_transactionsBuffer.Add(regMsg.SecurityId, new ExecutionMessage
-					{
-						ServerTime = DateTimeOffset.Now,
-						ExecutionType = ExecutionTypes.Transaction,
-						SecurityId = regMsg.SecurityId,
-						TransactionId = regMsg.TransactionId,
-						HasOrderInfo = true,
-						OrderPrice = regMsg.Price,
-						OrderVolume = regMsg.Volume,
-						Currency = regMsg.Currency,
-						PortfolioName = regMsg.PortfolioName,
-						ClientCode = regMsg.ClientCode,
-						BrokerCode = regMsg.BrokerCode,
-						Comment = regMsg.Comment,
-						Side = regMsg.Side,
-						TimeInForce = regMsg.TimeInForce,
-						ExpiryDate = regMsg.TillDate,
-						Balance = regMsg.Volume,
-						VisibleVolume = regMsg.VisibleVolume,
-						LocalTime = regMsg.LocalTime,
-						IsMarketMaker = regMsg.IsMarketMaker,
-						IsMargin = regMsg.IsMargin,
-						Slippage = regMsg.Slippage,
-						IsManual = regMsg.IsManual,
-						OrderType = regMsg.OrderType,
-						UserOrderId = regMsg.UserOrderId,
-						OrderState = OrderStates.Pending,
-						Condition = regMsg.Condition?.Clone(),
-					});
-
+					_transactionsBuffer.Add(regMsg.SecurityId, regMsg.ToExec());
 					break;
 				}
-				case MessageTypes.OrderCancel:
+				case MessageTypes.OrderReplace:
 				{
-					var cancelMsg = (OrderCancelMessage)message;
+					var replaceMsg = (OrderReplaceMessage)message;
 
-					//if (!CanStore<ExecutionMessage>(cancelMsg.SecurityId, ExecutionTypes.Transaction))
-					//	break;
+					if (!CanStore(replaceMsg))
+						break;
 
-					// try - cause looped back messages from offline adapter
-					_securityIds.TryAdd(cancelMsg.TransactionId, cancelMsg.SecurityId);
-
-					_transactionsBuffer.Add(cancelMsg.SecurityId, new ExecutionMessage
-					{
-						ServerTime = DateTimeOffset.Now,
-						ExecutionType = ExecutionTypes.Transaction,
-						SecurityId = cancelMsg.SecurityId,
-						HasOrderInfo = true,
-						TransactionId = cancelMsg.TransactionId,
-						IsCancellation = true,
-						OrderId = cancelMsg.OrderId,
-						OrderStringId = cancelMsg.OrderStringId,
-						OriginalTransactionId = cancelMsg.OriginalTransactionId,
-						OrderVolume = cancelMsg.Volume,
-						//Side = cancelMsg.Side,
-					});
-
+					_transactionsBuffer.Add(replaceMsg.SecurityId, replaceMsg.ToExec());
 					break;
 				}
+				case MessageTypes.OrderPairReplace:
+				{
+					var pairMsg = (OrderPairReplaceMessage)message;
+
+					if (!CanStore(pairMsg))
+						break;
+
+					_transactionsBuffer.Add(pairMsg.Message1.SecurityId, pairMsg.Message1.ToExec());
+					_transactionsBuffer.Add(pairMsg.Message2.SecurityId, pairMsg.Message2.ToExec());
+					break;
+				}
+				//case MessageTypes.OrderCancel:
+				//{
+				//	var cancelMsg = (OrderCancelMessage)message;
+
+				//	//if (!CanStore(cancelMsg))
+				//	//	break;
+
+				//	_transactionsBuffer.Add(cancelMsg.SecurityId, new ExecutionMessage
+				//	{
+				//		ServerTime = DateTimeOffset.Now,
+				//		ExecutionType = ExecutionTypes.Transaction,
+				//		SecurityId = cancelMsg.SecurityId,
+				//		HasOrderInfo = true,
+				//		TransactionId = cancelMsg.TransactionId,
+				//		IsCancellation = true,
+				//		OrderId = cancelMsg.OrderId,
+				//		OrderStringId = cancelMsg.OrderStringId,
+				//		OriginalTransactionId = cancelMsg.OriginalTransactionId,
+				//		OrderVolume = cancelMsg.Volume,
+				//		//Side = cancelMsg.Side,
+				//	});
+
+				//	break;
+				//}
 				case MessageTypes.MarketData:
 				{
 					var mdMsg = (MarketDataMessage)message;
@@ -248,24 +312,38 @@ namespace StockSharp.Algo.Storages
 
 					break;
 				}
+			}
+		}
 
-				// out messages
+		private void TryStore<TMessage>(DataBuffer<SecurityId, TMessage> buffer, TMessage message)
+			where TMessage : Message, ISecurityIdMessage
+		{
+			if (CanStore(message))
+				buffer.Add(message.SecurityId, message.TypedClone());
+		}
+
+		/// <summary>
+		/// Process message.
+		/// </summary>
+		/// <param name="message">Message.</param>
+		public void ProcessOutMessage(Message message)
+		{
+			if (message is null)
+				throw new ArgumentNullException(nameof(message));
+
+			if (message.OfflineMode != MessageOfflineModes.None)
+				return;
+
+			switch (message.Type)
+			{
 				case MessageTypes.Level1Change:
 				{
-					var level1Msg = (Level1ChangeMessage)message;
-
-					if (CanStore(level1Msg))
-						_level1Buffer.Add(level1Msg.SecurityId, level1Msg.TypedClone());
-
+					TryStore(_level1Buffer, (Level1ChangeMessage)message);
 					break;
 				}
 				case MessageTypes.QuoteChange:
 				{
-					var quotesMsg = (QuoteChangeMessage)message;
-
-					if (CanStore(quotesMsg))
-						_orderBooksBuffer.Add(quotesMsg.SecurityId, quotesMsg.TypedClone());
-
+					TryStore(_orderBooksBuffer, (QuoteChangeMessage)message);
 					break;
 				}
 				case MessageTypes.Execution:
@@ -274,7 +352,6 @@ namespace StockSharp.Algo.Storages
 
 					DataBuffer<SecurityId, ExecutionMessage> buffer;
 
-					var secId = execMsg.SecurityId;
 					var execType = execMsg.ExecutionType;
 
 					switch (execType)
@@ -283,14 +360,8 @@ namespace StockSharp.Algo.Storages
 							buffer = _ticksBuffer;
 							break;
 						case ExecutionTypes.Transaction:
-						{
-							// some responses do not contains sec id
-							if (secId.IsDefault() && !_securityIds.TryGetValue(execMsg.OriginalTransactionId, out secId))
-								return;
-
 							buffer = _transactionsBuffer;
 							break;
-						}
 						case ExecutionTypes.OrderLog:
 							buffer = _orderLogBuffer;
 							break;
@@ -298,12 +369,7 @@ namespace StockSharp.Algo.Storages
 							throw new ArgumentOutOfRangeException(nameof(message), execType, LocalizedStrings.Str1695Params.Put(message));
 					}
 
-					//if (execType == ExecutionTypes.Transaction && execMsg.TransactionId == 0)
-					//	break;
-
-					if (execType == ExecutionTypes.Transaction || CanStore(execMsg))
-						buffer.Add(secId, execMsg.TypedClone());
-
+					TryStore(buffer, execMsg);
 					break;
 				}
 				case MessageTypes.News:
@@ -315,14 +381,18 @@ namespace StockSharp.Algo.Storages
 
 					break;
 				}
+				case MessageTypes.BoardState:
+				{
+					var stateMsg = (BoardStateMessage)message;
+
+					if (CanStore(stateMsg))
+						_boardStatesBuffer.Add(stateMsg.TypedClone());
+
+					break;
+				}
 				case MessageTypes.PositionChange:
 				{
-					var posMsg = (PositionChangeMessage)message;
-					var secId = posMsg.SecurityId;
-
-					//if (CanStore<PositionChangeMessage>(secId))
-					_positionChangesBuffer.Add(secId, posMsg.TypedClone());
-
+					TryStore(_positionChangesBuffer, (PositionChangeMessage)message);
 					break;
 				}
 
@@ -342,17 +412,25 @@ namespace StockSharp.Algo.Storages
 		void IPersistable.Save(SettingsStorage storage)
 		{
 			storage.SetValue(nameof(Enabled), Enabled);
+			storage.SetValue(nameof(EnabledPositions), EnabledPositions);
+			storage.SetValue(nameof(EnabledTransactions), EnabledTransactions);
 			storage.SetValue(nameof(FilterSubscription), FilterSubscription);
 			storage.SetValue(nameof(TicksAsLevel1), TicksAsLevel1);
 			storage.SetValue(nameof(DisableStorageTimer), DisableStorageTimer);
+			storage.SetValue(nameof(IgnoreGeneratedMarketData), IgnoreGeneratedMarketData);
+			storage.SetValue(nameof(IgnoreGeneratedTransactional), IgnoreGeneratedTransactional);
 		}
 
 		void IPersistable.Load(SettingsStorage storage)
 		{
 			Enabled = storage.GetValue(nameof(Enabled), Enabled);
+			EnabledPositions = storage.GetValue(nameof(EnabledPositions), EnabledPositions);
+			EnabledTransactions = storage.GetValue(nameof(EnabledTransactions), EnabledTransactions);
 			FilterSubscription = storage.GetValue(nameof(FilterSubscription), FilterSubscription);
 			TicksAsLevel1 = storage.GetValue(nameof(TicksAsLevel1), TicksAsLevel1);
 			DisableStorageTimer = storage.GetValue(nameof(DisableStorageTimer), DisableStorageTimer);
+			IgnoreGeneratedMarketData = storage.GetValue(nameof(IgnoreGeneratedMarketData), IgnoreGeneratedMarketData);
+			IgnoreGeneratedTransactional = storage.GetValue(nameof(IgnoreGeneratedTransactional), IgnoreGeneratedTransactional);
 		}
 	}
 }

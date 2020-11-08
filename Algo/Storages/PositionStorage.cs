@@ -41,6 +41,8 @@ namespace StockSharp.Algo.Storages
 
 		IEnumerable<Portfolio> IPortfolioProvider.Portfolios => _entityRegistry.Portfolios;
 
+		SyncObject IPositionStorage.SyncRoot => _entityRegistry.Portfolios.SyncRoot;
+
 		event Action<Portfolio> IPortfolioProvider.NewPortfolio
 		{
 			add => throw new NotSupportedException();
@@ -53,37 +55,13 @@ namespace StockSharp.Algo.Storages
 			remove => throw new NotSupportedException();
 		}
 
-		void IPositionStorage.Save(Portfolio portfolio)
-		{
-			_entityRegistry.Portfolios.Save(portfolio);
-		}
+		void IPositionStorage.Save(Portfolio portfolio) => _entityRegistry.Portfolios.Save(portfolio);
+		void IPositionStorage.Delete(Portfolio portfolio) => _entityRegistry.Portfolios.Remove(portfolio);
 
-		void IPositionStorage.Delete(Portfolio portfolio)
-		{
-			_entityRegistry.Portfolios.Remove(portfolio);
-		}
+		void IPositionStorage.Save(Position position) => _entityRegistry.Positions.Save(position);
+		void IPositionStorage.Delete(Position position) => _entityRegistry.Positions.Remove(position);
 
-		void IPositionStorage.Save(Position position)
-		{
-			_entityRegistry.Positions.Save(position);
-		}
-
-		void IPositionStorage.Delete(Position position)
-		{
-			_entityRegistry.Positions.Remove(position);
-		}
-
-		Position IPositionProvider.GetPosition(Portfolio portfolio, Security security, string clientCode, string depoName)
-		{
-			return _entityRegistry.Positions.GetPosition(portfolio, security, clientCode, depoName);
-		}
-
-		void IPositionProvider.SubscribePositions(Security security, Portfolio portfolio, DateTimeOffset? from, DateTimeOffset? to, long? count, IMessageAdapter adapter)
-		{
-		}
-
-		void IPositionProvider.UnSubscribePositions(long originalTransactionId)
-		{
-		}
+		Position IPositionProvider.GetPosition(Portfolio portfolio, Security security, string strategyId, Sides? side, string clientCode, string depoName, TPlusLimits? limit)
+			=> _entityRegistry.Positions.GetPosition(portfolio, security, strategyId, side, clientCode, depoName, limit);
 	}
 }

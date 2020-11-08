@@ -21,6 +21,7 @@ namespace StockSharp.Algo.Candles
 	using System.Runtime.Serialization;
 
 	using Ecng.Common;
+	using Ecng.Collections;
 
 	using StockSharp.BusinessEntities;
 	using StockSharp.Messages;
@@ -218,12 +219,12 @@ namespace StockSharp.Algo.Candles
 		/// <summary>
 		/// <see cref="PriceLevels"/> with minimum <see cref="CandlePriceLevel.TotalVolume"/>.
 		/// </summary>
-		public CandlePriceLevel MinPriceLevel => PriceLevels?.OrderBy(l => l.TotalVolume).FirstOrDefault();
+		public CandlePriceLevel? MinPriceLevel => PriceLevels?.OrderBy(l => l.TotalVolume).FirstOr();
 
 		/// <summary>
 		/// <see cref="PriceLevels"/> with maximum <see cref="CandlePriceLevel.TotalVolume"/>.
 		/// </summary>
-		public CandlePriceLevel MaxPriceLevel => PriceLevels?.OrderByDescending(l => l.TotalVolume).FirstOrDefault();
+		public CandlePriceLevel? MaxPriceLevel => PriceLevels?.OrderByDescending(l => l.TotalVolume).FirstOr();
 
 		/// <summary>
 		/// Open interest.
@@ -232,6 +233,19 @@ namespace StockSharp.Algo.Candles
 		[DisplayNameLoc(LocalizedStrings.OIKey)]
 		[DescriptionLoc(LocalizedStrings.OpenInterestKey)]
 		public decimal? OpenInterest { get; set; }
+
+		/// <summary>
+		/// Sequence number.
+		/// </summary>
+		/// <remarks>Zero means no information.</remarks>
+		[DataMember]
+		public long SeqNum { get; set; }
+
+		/// <summary>
+		/// Determines the message is generated from the specified <see cref="DataType"/>.
+		/// </summary>
+		[DataMember]
+		public DataType BuildFrom { get; set; }
 
 		/// <inheritdoc />
 		public override string ToString()
@@ -279,7 +293,9 @@ namespace StockSharp.Algo.Candles
 			destination.TotalTicks = TotalTicks;
 			destination.TotalVolume = TotalVolume;
 			//destination.VolumeProfileInfo = VolumeProfileInfo;
-			destination.PriceLevels = PriceLevels?.Select(l => l.Clone()).ToArray();
+			destination.PriceLevels = PriceLevels?./*Select(l => l.Clone()).*/ToArray();
+			destination.SeqNum = SeqNum;
+			destination.BuildFrom = BuildFrom;
 
 			return destination;
 		}

@@ -5,10 +5,11 @@ M:StockSharp.Bittrex.BittrexMessageAdapter.IsAllDownloadingSupported(StockSharp.
 M:StockSharp.Bittrex.BittrexMessageAdapter.GetTimeFrames(StockSharp.Messages.SecurityId,System.Nullable{System.DateTimeOffset},System.Nullable{System.DateTimeOffset})/inheritdoc;DocStr8459
 P:StockSharp.Bittrex.BittrexMessageAdapter.IsSupportOrderBookIncrements/inheritdoc;DocStr8459
 M:StockSharp.Bittrex.BittrexMessageAdapter.GetHistoryStepSize(StockSharp.Messages.DataType,System.TimeSpan@)/inheritdoc;DocStr8459
+P:StockSharp.Bittrex.BittrexMessageAdapter.FeatureName/inheritdoc;DocStr8459
 M:StockSharp.Bittrex.BittrexMessageAdapter.OnSendInMessage(StockSharp.Messages.Message)/inheritdoc;DocStr8459
 P:StockSharp.Bittrex.BittrexMessageAdapter.AllTimeFrames/summary;DocStr206
-P:StockSharp.Bittrex.BittrexMessageAdapter.Key/summary;Str3304
-P:StockSharp.Bittrex.BittrexMessageAdapter.Secret/summary;DocStr3146
+P:StockSharp.Bittrex.BittrexMessageAdapter.Key/inheritdoc;DocStr8459
+P:StockSharp.Bittrex.BittrexMessageAdapter.Secret/inheritdoc;DocStr8459
 M:StockSharp.Bittrex.BittrexMessageAdapter.Save(Ecng.Serialization.SettingsStorage)/inheritdoc;DocStr8459
 M:StockSharp.Bittrex.BittrexMessageAdapter.Load(Ecng.Serialization.SettingsStorage)/inheritdoc;DocStr8459
 M:StockSharp.Bittrex.BittrexMessageAdapter.ToString/inheritdoc;DocStr8459

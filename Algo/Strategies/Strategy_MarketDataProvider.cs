@@ -8,36 +8,26 @@ namespace StockSharp.Algo.Strategies
 
 	partial class Strategy
 	{
-		private IMarketDataProviderEx MarketDataProvider => (IMarketDataProviderEx)SafeGetConnector();
+		private IMarketDataProvider MarketDataProvider => SafeGetConnector();
 
 		/// <inheritdoc />
 		public event Action<Security, IEnumerable<KeyValuePair<Level1Fields, object>>, DateTimeOffset, DateTimeOffset> ValuesChanged;
 
 		/// <inheritdoc />
+		[Obsolete("Use MarketDepthReceived event.")]
 		public MarketDepth GetMarketDepth(Security security)
-		{
-			return MarketDataProvider.GetMarketDepth(security);
-		}
+			=> MarketDataProvider.GetMarketDepth(security);
 
 		/// <inheritdoc />
 		public object GetSecurityValue(Security security, Level1Fields field)
-		{
-			if (security == null)
-				throw new ArgumentNullException(nameof(security));
-
-			return MarketDataProvider.GetSecurityValue(security, field);
-		}
+			=> MarketDataProvider.GetSecurityValue(security, field);
 
 		/// <inheritdoc />
 		public IEnumerable<Level1Fields> GetLevel1Fields(Security security)
-		{
-			if (security == null)
-				throw new ArgumentNullException(nameof(security));
-
-			return MarketDataProvider.GetLevel1Fields(security);
-		}
+			=> MarketDataProvider.GetLevel1Fields(security);
 
 		/// <inheritdoc />
+		[Obsolete("Use TickTradeReceived event.")]
 		public event Action<Trade> NewTrade
 		{
 			add => MarketDataProvider.NewTrade += value;
@@ -45,6 +35,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use SecurityReceived event.")]
 		public event Action<Security> NewSecurity
 		{
 			add => MarketDataProvider.NewSecurity += value;
@@ -52,6 +43,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use SecurityReceived event.")]
 		public event Action<Security> SecurityChanged
 		{
 			add => MarketDataProvider.SecurityChanged += value;
@@ -59,6 +51,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use OrderBookReceived event.")]
 		public event Action<MarketDepth> NewMarketDepth
 		{
 			add => MarketDataProvider.NewMarketDepth += value;
@@ -66,6 +59,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use OrderBookReceived event.")]
 		public event Action<MarketDepth> MarketDepthChanged
 		{
 			add => MarketDataProvider.MarketDepthChanged += value;
@@ -73,6 +67,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use MarketDepthReceived event.")]
 		public event Action<MarketDepth> FilteredMarketDepthChanged
 		{
 			add => MarketDataProvider.FilteredMarketDepthChanged += value;
@@ -80,6 +75,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use OrderLogItemReceived event.")]
 		public event Action<OrderLogItem> NewOrderLogItem
 		{
 			add => MarketDataProvider.NewOrderLogItem += value;
@@ -87,6 +83,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use NewsReceived event.")]
 		public event Action<News> NewNews
 		{
 			add => MarketDataProvider.NewNews += value;
@@ -94,6 +91,7 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
+		[Obsolete("Use NewsReceived event.")]
 		public event Action<News> NewsChanged
 		{
 			add => MarketDataProvider.NewsChanged += value;
@@ -206,135 +204,8 @@ namespace StockSharp.Algo.Strategies
 		}
 
 		/// <inheritdoc />
-		public void LookupSecurities(SecurityLookupMessage criteria)
-		{
-			MarketDataProvider.LookupSecurities(criteria);
-		}
-
-		/// <inheritdoc />
-		public void LookupBoards(BoardLookupMessage criteria)
-		{
-			MarketDataProvider.LookupBoards(criteria);
-		}
-
-		/// <inheritdoc />
-		public void LookupTimeFrames(TimeFrameLookupMessage criteria)
-		{
-			MarketDataProvider.LookupTimeFrames(criteria);
-		}
-
-		/// <inheritdoc />
+		[Obsolete("Use MarketDepthReceived event.")]
 		public MarketDepth GetFilteredMarketDepth(Security security)
-		{
-			return MarketDataProvider.GetFilteredMarketDepth(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeMarketData(Security security, MarketDataMessage message)
-		{
-			return MarketDataProvider.SubscribeMarketData(security, message);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeMarketData(Security security, MarketDataMessage message)
-		{
-			MarketDataProvider.UnSubscribeMarketData(security, message);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeMarketData(MarketDataMessage message)
-		{
-			return MarketDataProvider.SubscribeMarketData(message);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeMarketData(MarketDataMessage message)
-		{
-			MarketDataProvider.UnSubscribeMarketData(message);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeFilteredMarketDepth(Security security)
-		{
-			return MarketDataProvider.SubscribeFilteredMarketDepth(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeMarketDepth(Security security, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = null, MarketDataBuildModes buildMode = MarketDataBuildModes.LoadAndBuild, DataType buildFrom = null, int? maxDepth = null, TimeSpan? refreshSpeed = null, IOrderLogMarketDepthBuilder depthBuilder = null, IMessageAdapter adapter = null)
-		{
-			return MarketDataProvider.SubscribeMarketDepth(security, from, to, count, buildMode, buildFrom, maxDepth, refreshSpeed, depthBuilder, adapter);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeMarketDepth(Security security)
-		{
-			MarketDataProvider.UnSubscribeMarketDepth(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeTrades(Security security, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = null, MarketDataBuildModes buildMode = MarketDataBuildModes.LoadAndBuild, DataType buildFrom = null, IMessageAdapter adapter = null)
-		{
-			return MarketDataProvider.SubscribeTrades(security, from, to, count, buildMode, buildFrom, adapter);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeTrades(Security security)
-		{
-			MarketDataProvider.UnSubscribeTrades(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeLevel1(Security security, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = null, MarketDataBuildModes buildMode = MarketDataBuildModes.LoadAndBuild, DataType buildFrom = null, IMessageAdapter adapter = null)
-		{
-			return MarketDataProvider.SubscribeLevel1(security, from, to, count, buildMode, buildFrom, adapter);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeLevel1(Security security)
-		{
-			MarketDataProvider.UnSubscribeLevel1(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeOrderLog(Security security, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = null, IMessageAdapter adapter = null)
-		{
-			return MarketDataProvider.SubscribeOrderLog(security, from, to, count, adapter);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeOrderLog(Security security)
-		{
-			MarketDataProvider.UnSubscribeOrderLog(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeNews(Security security = null, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = null, IMessageAdapter adapter = null)
-		{
-			return MarketDataProvider.SubscribeNews(security, from, to, count, adapter);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeNews(Security security = null)
-		{
-			MarketDataProvider.UnSubscribeNews(security);
-		}
-
-		/// <inheritdoc />
-		public Subscription SubscribeBoard(ExchangeBoard board, DateTimeOffset? from = null, DateTimeOffset? to = null, long? count = null, IMessageAdapter adapter = null)
-		{
-			return MarketDataProvider.SubscribeBoard(board, from, to, count, adapter);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribeBoard(ExchangeBoard board)
-		{
-			MarketDataProvider.UnSubscribeBoard(board);
-		}
-
-		/// <inheritdoc />
-		public void UnSubscribe(long subscriptionId)
-		{
-			MarketDataProvider.UnSubscribe(subscriptionId);
-		}
+			=> MarketDataProvider.GetFilteredMarketDepth(security);
 	}
 }

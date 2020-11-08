@@ -73,7 +73,7 @@ namespace StockSharp.Algo.Candles
 			set
 			{
 				_security = value;
-				NotifyChanged(nameof(Security));
+				NotifyChanged();
 			}
 		}
 
@@ -88,9 +88,9 @@ namespace StockSharp.Algo.Candles
 			get => _candleType;
 			set
 			{
-				NotifyChanging(nameof(CandleType));
+				NotifyChanging();
 				_candleType = value;
-				NotifyChanged(nameof(CandleType));
+				NotifyChanged();
 			}
 		}
 
@@ -105,9 +105,9 @@ namespace StockSharp.Algo.Candles
 			get => _arg;
 			set
 			{
-				NotifyChanging(nameof(Arg));
+				NotifyChanging();
 				_arg = value;
-				NotifyChanged(nameof(Arg));
+				NotifyChanged();
 			}
 		}
 
@@ -247,7 +247,7 @@ namespace StockSharp.Algo.Candles
 			Description = LocalizedStrings.Str1073Key,
 			GroupName = LocalizedStrings.BuildKey,
 			Order = 23)]
-		public bool IsFinished { get; set; }
+		public bool IsFinishedOnly { get; set; }
 
 		/// <summary>
 		/// Try fill gaps.
@@ -302,7 +302,7 @@ namespace StockSharp.Algo.Candles
 			AllowBuildFromSmallerTimeFrame = storage.GetValue(nameof(AllowBuildFromSmallerTimeFrame), AllowBuildFromSmallerTimeFrame);
 			IsRegularTradingHours = storage.GetValue(nameof(IsRegularTradingHours), IsRegularTradingHours);
 			Count = storage.GetValue(nameof(Count), Count);
-			IsFinished = storage.GetValue(nameof(IsFinished), IsFinished);
+			IsFinishedOnly = storage.GetValue(nameof(IsFinishedOnly), IsFinishedOnly);
 			FillGaps = storage.GetValue(nameof(FillGaps), FillGaps);
 		}
 
@@ -338,7 +338,7 @@ namespace StockSharp.Algo.Candles
 			storage.SetValue(nameof(AllowBuildFromSmallerTimeFrame), AllowBuildFromSmallerTimeFrame);
 			storage.SetValue(nameof(IsRegularTradingHours), IsRegularTradingHours);
 			storage.SetValue(nameof(Count), Count);
-			storage.SetValue(nameof(IsFinished), IsFinished);
+			storage.SetValue(nameof(IsFinishedOnly), IsFinishedOnly);
 			storage.SetValue(nameof(FillGaps), FillGaps);
 		}
 	}

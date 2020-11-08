@@ -34,7 +34,7 @@
 		}
 
 		[Obsolete]
-		private static readonly SynchronizedPairSet<MarketDataTypes, Tuple<MessageTypes, object>> _messageTypeMap = new SynchronizedPairSet<MarketDataTypes, Tuple<MessageTypes, object>>
+		private static readonly SynchronizedPairSet<MarketDataTypes, Tuple<MessageTypes, object>> _messageTypeMapOld = new SynchronizedPairSet<MarketDataTypes, Tuple<MessageTypes, object>>
 		{
 			{ MarketDataTypes.Level1, Tuple.Create(MessageTypes.Level1Change, default(object)) },
 			{ MarketDataTypes.MarketDepth, Tuple.Create(MessageTypes.QuoteChange, default(object)) },
@@ -53,7 +53,7 @@
 		[Obsolete]
 		public static MarketDataTypes ToMarketDataType(this MessageTypes type, object arg)
 		{
-			if (_messageTypeMap.TryGetKey(Tuple.Create(type, arg), out var dataType))
+			if (_messageTypeMapOld.TryGetKey(Tuple.Create(type, arg), out var dataType))
 				return dataType;
 
 			throw new ArgumentOutOfRangeException(nameof(type), type, LocalizedStrings.Str1219);
@@ -68,7 +68,7 @@
 		[Obsolete]
 		public static MessageTypes ToMessageType(this MarketDataTypes type, out object arg)
 		{
-			if (!_messageTypeMap.TryGetValue(type, out var tuple))
+			if (!_messageTypeMapOld.TryGetValue(type, out var tuple))
 				throw new ArgumentOutOfRangeException(nameof(type), type, LocalizedStrings.Str1219);
 
 			arg = tuple.Item2;
@@ -93,9 +93,9 @@
 		/// <param name="dataType">Data type info.</param>
 		/// <returns><see cref="MarketDataTypes"/> value or <see langword="null"/> if cannot be converted.</returns>
 		[Obsolete]
-		public static MarketDataTypes? ToMarketDataType(this DataType dataType)
+		public static MarketDataTypes ToMarketDataType(this DataType dataType)
 		{
-			if (dataType == null)
+			if (dataType is null)
 				throw new ArgumentNullException(nameof(dataType));
 
 			if (dataType == DataType.Ticks)
@@ -112,8 +112,10 @@
 				return MarketDataTypes.Board;
 			else if (dataType.IsCandles)
 				return dataType.MessageType.ToCandleMarketDataType();
+			else if (dataType == DataType.FilteredMarketDepth)
+				return MarketDataTypes.MarketDepth;
 			else
-				return null;
+				throw new ArgumentOutOfRangeException(nameof(dataType), dataType, LocalizedStrings.Str1219);
 		}
 
 		/// <summary>
@@ -149,7 +151,7 @@
 					return DataType.News;
 
 				case MessageTypes.BoardState:
-					return DataType.Board;
+					return DataType.BoardState;
 
 				case MessageTypes.Level1Change:
 					return DataType.Level1;

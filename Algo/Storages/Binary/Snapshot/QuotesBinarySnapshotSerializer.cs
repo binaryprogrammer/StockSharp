@@ -35,6 +35,9 @@ namespace StockSharp.Algo.Storages.Binary.Snapshot
 
 			public int BidCount;
 			public int AskCount;
+
+			public long SeqNum;
+			public SnapshotDataType? BuildFrom;
 		}
 
 		private int? _maxDepth;
@@ -54,7 +57,7 @@ namespace StockSharp.Algo.Storages.Binary.Snapshot
 			}
 		}
 
-		Version ISnapshotSerializer<SecurityId, QuoteChangeMessage>.Version { get; } = SnapshotVersions.V21;
+		Version ISnapshotSerializer<SecurityId, QuoteChangeMessage>.Version { get; } = SnapshotVersions.V22;
 
 		string ISnapshotSerializer<SecurityId, QuoteChangeMessage>.Name => "OrderBook";
 
@@ -72,6 +75,9 @@ namespace StockSharp.Algo.Storages.Binary.Snapshot
 				
 				LastChangeServerTime = message.ServerTime.To<long>(),
 				LastChangeLocalTime = message.LocalTime.To<long>(),
+
+				BuildFrom = message.BuildFrom == null ? default(SnapshotDataType?) : (SnapshotDataType)message.BuildFrom,
+				SeqNum = message.SeqNum,
 			};
 
 			var bids = message.Bids.ToArray();
@@ -151,7 +157,8 @@ namespace StockSharp.Algo.Storages.Binary.Snapshot
 					LocalTime = snapshot.LastChangeLocalTime.To<DateTimeOffset>(),
 					Bids = bids,
 					Asks = asks,
-					IsSorted = true,
+					BuildFrom = snapshot.BuildFrom,
+					SeqNum = snapshot.SeqNum,
 				};
 			}
 		}
@@ -161,23 +168,16 @@ namespace StockSharp.Algo.Storages.Binary.Snapshot
 			return message.SecurityId;
 		}
 
-		QuoteChangeMessage ISnapshotSerializer<SecurityId, QuoteChangeMessage>.CreateCopy(QuoteChangeMessage message)
-		{
-			return message.TypedClone();
-		}
-
 		void ISnapshotSerializer<SecurityId, QuoteChangeMessage>.Update(QuoteChangeMessage message, QuoteChangeMessage changes)
 		{
-			if (!changes.IsSorted)
-			{
-				message.Bids = changes.Bids.OrderByDescending(q => q.Price).ToArray();
-				message.Asks = changes.Asks.OrderBy(q => q.Price).ToArray();
-			}
-			else
-			{
-				message.Bids = changes.Bids.ToArray();
-				message.Asks = changes.Asks.ToArray();
-			}
+			message.Bids = changes.Bids.ToArray();
+			message.Asks = changes.Asks.ToArray();
+
+			if (changes.BuildFrom != default)
+				message.BuildFrom = changes.BuildFrom;
+
+			if (changes.SeqNum != default)
+				message.SeqNum = changes.SeqNum;
 
 			message.LocalTime = changes.LocalTime;
 			message.ServerTime = changes.ServerTime;

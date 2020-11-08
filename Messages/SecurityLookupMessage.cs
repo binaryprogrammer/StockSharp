@@ -53,11 +53,13 @@ namespace StockSharp.Messages
 		[DataMember]
 		public bool OnlySecurityId { get; set; }
 
-		/// <summary>
-		/// Market-data count.
-		/// </summary>
+		/// <inheritdoc />
 		[DataMember]
-		public int? Count { get; set; }
+		public long? Skip { get; set; }
+
+		/// <inheritdoc />
+		[DataMember]
+		public long? Count { get; set; }
 
 		private SecurityId[] _securityIds = ArrayHelper.Empty<SecurityId>();
 
@@ -72,6 +74,12 @@ namespace StockSharp.Messages
 		}
 
 		/// <summary>
+		/// Electronic board code.
+		/// </summary>
+		[DataMember]
+		public string BoardCode { get; set; }
+
+		/// <summary>
 		/// Initializes a new instance of the <see cref="SecurityLookupMessage"/>.
 		/// </summary>
 		public SecurityLookupMessage()
@@ -80,6 +88,19 @@ namespace StockSharp.Messages
 		}
 
 		DataType ISubscriptionMessage.DataType => DataType.Securities;
+
+		bool ISubscriptionMessage.FilterEnabled
+			=>
+			SecurityType != null || SecurityId != default ||
+			!Name.IsEmpty() || !ShortName.IsEmpty() ||
+			SecurityTypes?.Length > 0 || OptionType != null ||
+			Strike != null || VolumeStep != null || PriceStep != null ||
+			!CfiCode.IsEmpty() || MinVolume != null || MaxVolume != null ||
+			Multiplier != null || Decimals != null || ExpiryDate != null ||
+			SettlementDate != null || IssueDate != null || IssueSize != null ||
+			!UnderlyingSecurityCode.IsEmpty() || UnderlyingSecurityMinVolume != null ||
+			UnderlyingSecurityType != null || !Class.IsEmpty() || Currency != null ||
+			!BinaryOptionType.IsEmpty() || Shortable != null || FaceValue != null || !BoardCode.IsEmpty();
 
 		/// <summary>
 		/// Create a copy of <see cref="SecurityLookupMessage"/>.
@@ -104,8 +125,10 @@ namespace StockSharp.Messages
 			destination.TransactionId = TransactionId;
 			destination.SecurityTypes = SecurityTypes?.ToArray();
 			destination.OnlySecurityId = OnlySecurityId;
+			destination.Skip = Skip;
 			destination.Count = Count;
 			destination.SecurityIds = SecurityIds.ToArray();
+			destination.BoardCode = BoardCode;
 
 			base.CopyTo(destination);
 		}
@@ -115,14 +138,20 @@ namespace StockSharp.Messages
 		{
 			var str = base.ToString() + $",TransId={TransactionId},SecId={SecurityId},Name={Name},SecType={this.GetSecurityTypes().Select(t => t.To<string>()).Join("|")},ExpDate={ExpiryDate}";
 
-			if (Count != null)
-				str += $",Count={Count.Value}";
+			if (Skip != default)
+				str += $",Skip={Skip}";
+
+			if (Count != default)
+				str += $",Cnt={Count}";
 
 			if (OnlySecurityId)
 				str += $",OnlyId={OnlySecurityId}";
 
 			if (SecurityIds.Length > 0)
 				str += $",Ids={SecurityIds.Select(id => id.ToString()).JoinComma()}";
+
+			if (!BoardCode.IsEmpty())
+				str += $",Board={BoardCode}";
 
 			return str;
 		}
@@ -137,12 +166,6 @@ namespace StockSharp.Messages
 		{
 			// prevent for online mode
 			get => DateTimeOffset.MaxValue;
-			set { }
-		}
-
-		long? ISubscriptionMessage.Count
-		{
-			get => null;
 			set { }
 		}
 

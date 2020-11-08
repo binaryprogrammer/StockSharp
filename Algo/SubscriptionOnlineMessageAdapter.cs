@@ -2,6 +2,7 @@
 {
 	using System;
 	using System.Collections.Generic;
+	using System.Linq;
 
 	using Ecng.Common;
 	using Ecng.Collections;
@@ -17,6 +18,8 @@
 	{
 		private class SubscriptionInfo
 		{
+			private readonly SubscriptionInfo _main;
+
 			public ISubscriptionMessage Subscription { get; }
 
 			public SubscriptionInfo(ISubscriptionMessage subscription)
@@ -24,18 +27,55 @@
 				Subscription = subscription ?? throw new ArgumentNullException(nameof(subscription));
 			}
 
-			public SubscriptionStates State { get; set; } = SubscriptionStates.Stopped;
+			public SubscriptionInfo(SubscriptionInfo main)
+			{
+				_main = main ?? throw new ArgumentNullException(nameof(main));
 
-			public readonly CachedSynchronizedSet<long> Subscribers = new CachedSynchronizedSet<long>();
+				Subscription = main.Subscription;
+				Subscribers = main.Subscribers;
+			}
 
-			public override string ToString() => Subscription.ToString();
+			private void CheckOnLinked()
+			{
+				if (_main != null)
+					throw new InvalidOperationException();
+			}
+
+			private SubscriptionStates _state = SubscriptionStates.Stopped;
+
+			public SubscriptionStates State
+			{
+				get => _main?.State ?? _state;
+				set
+				{
+					CheckOnLinked();
+					_state = value;
+				}
+			}
+
+			public readonly HashSet<long> ExtraFilters = new HashSet<long>();
+			public readonly CachedSynchronizedDictionary<long, ISubscriptionMessage> Subscribers = new CachedSynchronizedDictionary<long, ISubscriptionMessage>();
+
+			private readonly List<long> _linked = new List<long>();
+
+			public List<long> Linked
+			{
+				get
+				{
+					CheckOnLinked();
+					return _linked;
+				}
+			}
+
+			public override string ToString() => (_main != null ? "Linked: " : string.Empty) + Subscription.ToString();
 		}
 
 		private readonly SyncObject _sync = new SyncObject();
 
 		private readonly PairSet<Tuple<DataType, SecurityId>, SubscriptionInfo> _subscriptionsByKey = new PairSet<Tuple<DataType, SecurityId>, SubscriptionInfo>();
 		private readonly Dictionary<long, SubscriptionInfo> _subscriptionsById = new Dictionary<long, SubscriptionInfo>();
-		
+		private readonly HashSet<long> _strategyPosSubscriptions = new HashSet<long>();
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="SubscriptionOnlineMessageAdapter"/>.
 		/// </summary>
@@ -48,10 +88,44 @@
 		/// <inheritdoc />
 		protected override bool OnSendInMessage(Message message)
 		{
+			void TryAddOrderSubscription(OrderMessage orderMsg)
+			{
+				lock (_sync)
+				{
+					if (_subscriptionsByKey.TryGetValue(Tuple.Create(DataType.Transactions, default(SecurityId)), out var info))
+						TryAddOrderTransaction(info, orderMsg.TransactionId);
+
+					//if (_subscriptionsByKey.TryGetValue(Tuple.Create(DataType.Transactions, orderMsg.SecurityId), out info))
+					//	TryAddOrderTransaction(info, orderMsg.TransactionId);
+				}
+			}
+
 			switch (message.Type)
 			{
 				case MessageTypes.Reset:
 					return ProcessReset(message);
+
+				case MessageTypes.OrderRegister:
+				case MessageTypes.OrderReplace:
+				case MessageTypes.OrderCancel:
+				case MessageTypes.OrderGroupCancel:
+				{
+					var orderMsg = (OrderMessage)message;
+
+					TryAddOrderSubscription(orderMsg);
+
+					return base.OnSendInMessage(message);
+				}
+
+				case MessageTypes.OrderPairReplace:
+				{
+					var pairMsg = (OrderPairReplaceMessage)message;
+
+					TryAddOrderSubscription(pairMsg.Message1);
+					TryAddOrderSubscription(pairMsg.Message2);
+
+					return base.OnSendInMessage(message);
+				}
 
 				case MessageTypes.OrderStatus:
 				{
@@ -75,27 +149,20 @@
 
 		private void ChangeState(SubscriptionInfo info, SubscriptionStates state)
 		{
-			var id = info.Subscription.TransactionId;
-
-			const string text = "Subscription {0} {1}->{2}.";
-
-			if (info.State.IsOk(state))
-				this.AddInfoLog(text, id, info.State, state);
-			else
-				this.AddWarningLog(text, id, info.State, state);
-
-			info.State = state;
+			info.State = info.State.ChangeSubscriptionState(state, info.Subscription.TransactionId, this);
 
 			if (!state.IsActive())
 			{
 				_subscriptionsByKey.RemoveByValue(info);
-				this.AddInfoLog(LocalizedStrings.OnlineSubscriptionRemoved, id);
+				this.AddInfoLog(LocalizedStrings.SubscriptionRemoved, info.Subscription.TransactionId);
 			}
 		}
 
 		/// <inheritdoc />
 		protected override void OnInnerAdapterNewOutMessage(Message message)
 		{
+			Message extra = null;
+
 			switch (message.Type)
 			{
 				case MessageTypes.Disconnect:
@@ -108,6 +175,7 @@
 				case MessageTypes.SubscriptionResponse:
 				{
 					var responseMsg = (SubscriptionResponseMessage)message;
+					var id = responseMsg.OriginalTransactionId;
 
 					HashSet<long> subscribers = null;
 
@@ -115,14 +183,22 @@
 					{
 						if (responseMsg.IsOk())
 						{
-							if (_subscriptionsById.TryGetValue(responseMsg.OriginalTransactionId, out var info))
+							if (_subscriptionsById.TryGetValue(id, out var info))
 							{
 								ChangeState(info, SubscriptionStates.Active);
+
+								if (!this.IsOutMessageSupported(MessageTypes.SubscriptionOnline))
+								{
+									extra = new SubscriptionOnlineMessage
+									{
+										OriginalTransactionId = id
+									};
+								}
 							}
 						}
 						else
 						{
-							if (_subscriptionsById.TryGetAndRemove(responseMsg.OriginalTransactionId, out var info))
+							if (_subscriptionsById.TryGetAndRemove(id, out var info))
 							{
 								ChangeState(info, SubscriptionStates.Error);
 							}
@@ -171,6 +247,15 @@
 						{
 							if (subscrMsg.OriginalTransactionId != 0 && _subscriptionsById.TryGetValue(subscrMsg.OriginalTransactionId, out var info))
 							{
+								if (message is ExecutionMessage execMsg &&
+									execMsg.ExecutionType == ExecutionTypes.Transaction &&
+									execMsg.TransactionId != 0 &&
+									info.Subscription.DataType == DataType.Transactions)
+								{
+									TryAddOrderTransaction(info, execMsg.TransactionId,
+										false // lookup history can request order changes (registered, filled, cancelled)
+									);
+								}
 							}
 							else
 							{
@@ -181,7 +266,23 @@
 									break;
 							}
 
-							subscrMsg.SetSubscriptionIds(info.Subscribers.Cache);
+							var ids = info.Subscribers.CachedKeys;
+
+							if (info.ExtraFilters.Count > 0)
+							{
+								var set = new HashSet<long>(ids);
+
+								foreach (var filterId in info.ExtraFilters)
+								{
+									if (!subscrMsg.IsMatch(info.Subscribers[filterId]))
+										set.Remove(filterId);
+								}
+
+								if (ids.Length != set.Count)
+									ids = set.ToArray();
+							}
+
+							subscrMsg.SetSubscriptionIds(ids);
 						}
 					}
 
@@ -190,6 +291,23 @@
 			}
 
 			base.OnInnerAdapterNewOutMessage(message);
+
+			if (extra != null)
+				base.OnInnerAdapterNewOutMessage(extra);
+		}
+
+		private void TryAddOrderTransaction(SubscriptionInfo statusInfo, long transactionId, bool warnOnDuplicate = true)
+		{
+			if (!_subscriptionsById.ContainsKey(transactionId))
+			{
+				var orderSubscription = new SubscriptionInfo(statusInfo);
+
+				_subscriptionsById.Add(transactionId, orderSubscription);
+
+				statusInfo.Linked.Add(transactionId);
+			}
+			else if (warnOnDuplicate)
+				this.AddWarningLog("Order's transaction {0} was handled before.", transactionId);
 		}
 
 		private void ClearState()
@@ -198,6 +316,7 @@
 			{
 				_subscriptionsByKey.Clear();
 				_subscriptionsById.Clear();
+				_strategyPosSubscriptions.Clear();
 			}
 		}
 
@@ -224,10 +343,17 @@
 			{
 				if (isSubscribe)
 				{
-					if (message.To == null)
+					if (message is PortfolioLookupMessage posMsg && !posMsg.StrategyId.IsEmpty())
+					{
+						_strategyPosSubscriptions.Add(posMsg.TransactionId);
+						sendInMsg = message;
+					}
+					else if (!message.IsHistoryOnly())
 					{
 						var dataType = message.DataType;
 						var secId = default(SecurityId);
+
+						var extraFilter = false;
 
 						if (message is ISecurityIdMessage secIdMsg)
 						{
@@ -236,13 +362,22 @@
 							if (secId == default && IsSecurityRequired(dataType))
 								this.AddWarningLog("Subscription {0} required security id.", dataType);
 							else if (secId != default && !IsSecurityRequired(dataType))
-								this.AddWarningLog("Subscription {0} doesn't required security id.", dataType);
+							{
+								//this.AddWarningLog("Subscription {0} doesn't required security id.", dataType);
+								extraFilter = true;
+								secId = default;
+							}
 						}
+
+						if (!extraFilter)
+							extraFilter = message.FilterEnabled;
 
 						var key = Tuple.Create(dataType, secId);
 
 						if (!_subscriptionsByKey.TryGetValue(key, out var info))
 						{
+							this.AddInfoLog("Subscription {0} initial.", transId);
+
 							sendInMsg = message;
 
 							info = new SubscriptionInfo(message.TypedClone());
@@ -251,6 +386,8 @@
 						}
 						else
 						{
+							this.AddInfoLog("Subscription {0} joined to {1}.", transId, info.Subscription.TransactionId);
+
 							var resultMsg = message.CreateResult();
 
 							if (message.Type == MessageTypes.MarketData)
@@ -268,7 +405,11 @@
 						}
 
 						_subscriptionsById.Add(transId, info);
-						info.Subscribers.Add(transId);
+
+						info.Subscribers.Add(transId, message.TypedClone());
+
+						if (extraFilter)
+							info.ExtraFilters.Add(transId);
 					}
 					else
 						sendInMsg = message;
@@ -297,6 +438,14 @@
 						}
 						else
 						{
+							info.ExtraFilters.Remove(originId);
+
+							if (info.Linked.Count > 0)
+							{
+								foreach (var linked in info.Linked)
+									_subscriptionsById.Remove(linked);
+							}
+
 							if (info.Subscribers.Count == 0)
 							{
 								_subscriptionsByKey.RemoveByValue(info);
@@ -316,12 +465,25 @@
 							}
 						}
 					}
+					else if (_strategyPosSubscriptions.Remove(originId))
+					{
+						sendInMsg = message;
+					}
 					else
 					{
 						sendOutMsgs = new[]
 						{
 							(Message)originId.CreateSubscriptionResponse(new InvalidOperationException(LocalizedStrings.SubscriptionNonExist.Put(originId)))
 						};
+					}
+				}
+
+				if (sendOutMsgs != null)
+				{
+					foreach (var sendOutMsg in sendOutMsgs)
+					{
+						this.AddInfoLog("Out: {0}", sendOutMsg);
+						RaiseNewOutMessage(sendOutMsg);
 					}
 				}
 			}
@@ -332,15 +494,6 @@
 			{
 				this.AddInfoLog("In: {0}", sendInMsg);
 				retVal = base.OnSendInMessage((Message)sendInMsg);
-			}
-
-			if (sendOutMsgs != null)
-			{
-				foreach (var sendOutMsg in sendOutMsgs)
-				{
-					this.AddInfoLog("Out: {0}", sendOutMsg);
-					RaiseNewOutMessage(sendOutMsg);	
-				}
 			}
 
 			return retVal;

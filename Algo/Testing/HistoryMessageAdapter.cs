@@ -23,7 +23,7 @@ namespace StockSharp.Algo.Testing
     /// </summary>
     public class HistoryMessageAdapter : MessageAdapter
 	{
-		private readonly Dictionary<SourceKey, MarketDataGenerator> _generators = new Dictionary<SourceKey, MarketDataGenerator>();
+		private readonly Dictionary<SourceKey, Tuple<MarketDataGenerator, long>> _generators = new Dictionary<SourceKey, Tuple<MarketDataGenerator, long>>();
 		private readonly Dictionary<SourceKey, Func<DateTimeOffset, IEnumerable<Message>>> _historySources = new Dictionary<SourceKey, Func<DateTimeOffset, IEnumerable<Message>>>();
 
 		private readonly List<Tuple<IMarketDataStorage, long>> _actions = new List<Tuple<IMarketDataStorage, long>>();
@@ -133,10 +133,14 @@ namespace StockSharp.Algo.Testing
 			this.AddSupportedMessage(ExtendedMessageTypes.ChangeTimeInterval, null);
 		}
 
-		/// <inheritdoc />
+		/// <summary>
+		/// Date in history for starting the paper trading.
+		/// </summary>
 		public DateTimeOffset StartDate { get; set; }
 
-		/// <inheritdoc />
+		/// <summary>
+		/// Date in history to stop the paper trading (date is included).
+		/// </summary>
 		public DateTimeOffset StopDate { get; set; }
 
 		/// <summary>
@@ -283,9 +287,11 @@ namespace StockSharp.Algo.Testing
 							? SecurityProvider.LookupAll() 
 							: SecurityProvider.Lookup(lookupMsg);
 
+					var processedBoards = new HashSet<ExchangeBoard>();
+
 					foreach (var security in securities)
 					{
-						if (security.Board != null)
+						if (security.Board != null && processedBoards.Add(security.Board))
 							SendOutMessage(security.Board.ToMessage());
 
 						SendOutMessage(security.ToMessage(originalTransactionId: lookupMsg.TransactionId));
@@ -320,7 +326,7 @@ namespace StockSharp.Algo.Testing
 
 					switch (stateMsg.State)
 					{
-						case EmulationStates.Starting:
+						case ChannelStates.Starting:
 						{
 							if (!_isStarted)
 								Start(stateMsg.StartDate.IsDefault() ? StartDate : stateMsg.StartDate, stateMsg.StopDate.IsDefault() ? StopDate : stateMsg.StopDate);
@@ -328,7 +334,7 @@ namespace StockSharp.Algo.Testing
 							break;
 						}
 
-						case EmulationStates.Stopping:
+						case ChannelStates.Stopping:
 						{
 							Stop();
 							break;
@@ -342,12 +348,18 @@ namespace StockSharp.Algo.Testing
 				case ExtendedMessageTypes.Generator:
 				{
 					var generatorMsg = (GeneratorMessage)message;
-					var item = Tuple.Create(generatorMsg.SecurityId, generatorMsg.DataType2);
-
+					
 					if (generatorMsg.IsSubscribe)
-						_generators.Add(item, generatorMsg.Generator);
+					{
+						_generators.Add(Tuple.Create(generatorMsg.SecurityId, generatorMsg.DataType2), Tuple.Create(generatorMsg.Generator, generatorMsg.TransactionId));
+					}
 					else
-						_generators.Remove(item);
+					{
+						var pair = _generators.FirstOrDefault(p => p.Value.Item2 == generatorMsg.OriginalTransactionId);
+
+						if (pair.Key != default)
+							_generators.Remove(pair.Key);
+					}
 
 					break;
 				}
@@ -419,13 +431,15 @@ namespace StockSharp.Algo.Testing
 				return GetHistorySource2(securityId) ?? GetHistorySource2(default);
 			}
 
+			bool HasGenerator(DataType dt) => _generators.ContainsKey(Tuple.Create(securityId, dt));
+
 			Exception error = null;
 
 			if (dataType == DataType.Level1)
 			{
 				if (isSubscribe)
 				{
-					if (!_generators.ContainsKey(Tuple.Create(securityId, dataType)))
+					if (!HasGenerator(dataType))
 					{
 						var historySource = GetHistorySource();
 
@@ -459,7 +473,7 @@ namespace StockSharp.Algo.Testing
 			{
 				if (isSubscribe)
 				{
-					if (!_generators.ContainsKey(Tuple.Create(securityId, dataType)))
+					if (!HasGenerator(dataType))
 					{
 						var historySource = GetHistorySource();
 
@@ -476,7 +490,7 @@ namespace StockSharp.Algo.Testing
 			{
 				if (isSubscribe)
 				{
-					if (!_generators.ContainsKey(Tuple.Create(securityId, dataType)))
+					if (!HasGenerator(dataType))
 					{
 						var historySource = GetHistorySource();
 
@@ -493,7 +507,7 @@ namespace StockSharp.Algo.Testing
 			{
 				if (isSubscribe)
 				{
-					if (!_generators.ContainsKey(Tuple.Create(securityId, dataType)))
+					if (!HasGenerator(dataType))
 					{
 						var historySource = GetHistorySource();
 
@@ -510,7 +524,7 @@ namespace StockSharp.Algo.Testing
 			{
 				if (isSubscribe)
 				{
-					if (_generators.ContainsKey(Tuple.Create(securityId, DataType.Ticks)))
+					if (HasGenerator(DataType.Ticks))
 					{
 						SendSubscriptionNotSupported(transId);
 						return;
@@ -535,7 +549,7 @@ namespace StockSharp.Algo.Testing
 
 			SendSubscriptionReply(transId, error);
 
-			if (error == null)
+			if (isSubscribe && error == null)
 				SendSubscriptionOnline(transId);
 		}
 
@@ -551,7 +565,7 @@ namespace StockSharp.Algo.Testing
 			_cancellationToken = new CancellationTokenSource();
 
 			ThreadingHelper
-				.Thread(() => CultureInfo.InvariantCulture.DoInCulture(() =>
+				.ThreadInvariant(() =>
 				{
 					try
 					{
@@ -603,15 +617,29 @@ namespace StockSharp.Algo.Testing
 							}
 
 							if (!_isChanged)
-								SendOutMessage(new LastMessage { LocalTime = stopDate });
+							{
+								SendOutMessage(new EmulationStateMessage
+								{
+									LocalTime = stopDate,
+									State = ChannelStates.Stopping,
+								});
+
+								break;
+							}
 						}
 					}
 					catch (Exception ex)
 					{
 						SendOutMessage(ex.ToErrorMessage());
-						SendOutMessage(new LastMessage { IsError = true });
+
+						SendOutMessage(new EmulationStateMessage
+						{
+							LocalTime = stopDate,
+							State = ChannelStates.Stopping,
+							Error = ex,
+						});
 					}
-				}))
+				})
 				.Name(Name)
 				.Launch();
 		}

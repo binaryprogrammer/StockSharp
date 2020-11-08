@@ -68,8 +68,11 @@ namespace StockSharp.Algo.Export
 			}
 		}
 
-		private void Export(IEnumerable<Message> messages)
+		private (int, DateTimeOffset?) Export(IEnumerable<Message> messages)
 		{
+			var count = 0;
+			var lastTime = default(DateTimeOffset?);
+
 			foreach (var batch in messages.Batch(BatchSize))
 			{
 				foreach (var group in batch.GroupBy(m => m.TryGetSecurityId()))
@@ -82,62 +85,53 @@ namespace StockSharp.Algo.Export
 						break;
 
 					storage.Save(b);
+
+					count += b.Length;
+
+					if (b.LastOrDefault() is IServerTimeMessage timeMsg)
+						lastTime = timeMsg.ServerTime;
 				}
 			}
+
+			return (count, lastTime);
 		}
 
 		/// <inheritdoc />
-		protected override void ExportOrderLog(IEnumerable<ExecutionMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) ExportOrderLog(IEnumerable<ExecutionMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void ExportTicks(IEnumerable<ExecutionMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) ExportTicks(IEnumerable<ExecutionMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void ExportTransactions(IEnumerable<ExecutionMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) ExportTransactions(IEnumerable<ExecutionMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<QuoteChangeMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) Export(IEnumerable<QuoteChangeMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<Level1ChangeMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) Export(IEnumerable<Level1ChangeMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<PositionChangeMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) Export(IEnumerable<PositionChangeMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<IndicatorValue> values) => throw new NotSupportedException();
+		protected override (int, DateTimeOffset?) Export(IEnumerable<IndicatorValue> values) => throw new NotSupportedException();
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<CandleMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) Export(IEnumerable<CandleMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<NewsMessage> messages)
-		{
-			Export(messages);
-		}
+		protected override (int, DateTimeOffset?) Export(IEnumerable<NewsMessage> messages)
+			=> Export(messages);
 
 		/// <inheritdoc />
-		protected override void Export(IEnumerable<SecurityMessage> messages) => throw new NotSupportedException();
+		protected override (int, DateTimeOffset?) Export(IEnumerable<SecurityMessage> messages) => throw new NotSupportedException();
 	}
 }

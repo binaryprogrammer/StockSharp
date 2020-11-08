@@ -1,9 +1,9 @@
 namespace StockSharp.Algo.Storages
 {
 	using System;
-	using System.Collections.Generic;
 	using System.Threading;
 	using System.Linq;
+	using System.Collections.Generic;
 
 	using Ecng.Common;
 	using Ecng.Collections;
@@ -18,10 +18,9 @@ namespace StockSharp.Algo.Storages
 	public class BufferMessageAdapter : MessageAdapterWrapper
 	{
 		private readonly SynchronizedSet<long> _orderStatusIds = new SynchronizedSet<long>();
-		private readonly SynchronizedDictionary<long, long> _orderIds = new SynchronizedDictionary<long, long>();
-		private readonly SynchronizedDictionary<string, long> _orderStringIds = new SynchronizedDictionary<string, long>(StringComparer.InvariantCultureIgnoreCase);
-
 		private readonly SynchronizedDictionary<long, long> _cancellationTransactions = new SynchronizedDictionary<long, long>();
+		private readonly SynchronizedDictionary<long, long> _replaceTransactions = new SynchronizedDictionary<long, long>();
+		private readonly SynchronizedDictionary<long, long> _replaceTransactionsByTransId = new SynchronizedDictionary<long, long>();
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="BufferMessageAdapter"/>.
@@ -58,14 +57,14 @@ namespace StockSharp.Algo.Storages
 		/// </summary>
 		private void Reset()
 		{
-			_cancellationTransactions.Clear();
-			_orderIds.Clear();
-			_orderStringIds.Clear();
 			_orderStatusIds.Clear();
+			_cancellationTransactions.Clear();
+			_replaceTransactions.Clear();
+			_replaceTransactionsByTransId.Clear();
 		}
 
 		private ISnapshotStorage GetSnapshotStorage(DataType dataType)
-			=> SnapshotRegistry.GetSnapshotStorage(dataType.MessageType, dataType.Arg);
+			=> SnapshotRegistry.GetSnapshotStorage(dataType);
 
 		/// <inheritdoc />
 		protected override bool OnSendInMessage(Message message)
@@ -74,7 +73,7 @@ namespace StockSharp.Algo.Storages
 			{
 				case MessageTypes.Reset:
 					Reset();
-					Buffer.ProcessMessage(message);
+					Buffer.ProcessInMessage(message);
 					break;
 
 				case MessageTypes.Connect:
@@ -87,17 +86,64 @@ namespace StockSharp.Algo.Storages
 					if (message.Adapter != null && message.Adapter != this)
 						break;
 
-					message = ProcessOrderStatus((OrderStatusMessage)message);
+					if (Buffer.EnabledTransactions)
+						message = ProcessOrderStatus((OrderStatusMessage)message);
+
+					break;
+				}
+
+				case MessageTypes.OrderRegister:
+				{
+					if (Buffer.EnabledTransactions)
+						Buffer.ProcessInMessage(message);
+
+					break;
+				}
+				case MessageTypes.OrderReplace:
+				{
+					if (Buffer.EnabledTransactions)
+					{
+						var replaceMsg = (OrderReplaceMessage)message;
+
+						// can be looped back from offline
+						if (!_replaceTransactions.ContainsKey(replaceMsg.TransactionId))
+							_replaceTransactions.Add(replaceMsg.TransactionId, replaceMsg.OriginalTransactionId);
+
+						Buffer.ProcessInMessage(replaceMsg);
+					}
+					
+					break;
+				}
+				case MessageTypes.OrderPairReplace:
+				{
+					if (Buffer.EnabledTransactions)
+					{
+						var pairMsg = (OrderPairReplaceMessage)message;
+						
+						// can be looped back from offline
+						if (!_replaceTransactions.ContainsKey(pairMsg.Message1.TransactionId))
+						{
+							_replaceTransactions.Add(pairMsg.Message1.TransactionId, pairMsg.Message1.OriginalTransactionId);
+							_replaceTransactions.Add(pairMsg.Message2.TransactionId, pairMsg.Message2.OriginalTransactionId);
+						}
+
+						Buffer.ProcessInMessage(message);
+					}
+
 					break;
 				}
 
 				case MessageTypes.OrderCancel:
 				{
-					var cancelMsg = (OrderCancelMessage)message;
+					if (Buffer.EnabledTransactions)
+					{
+						var cancelMsg = (OrderCancelMessage)message;
 
-					// can be looped back from offline
-					_cancellationTransactions.TryAdd(cancelMsg.TransactionId, cancelMsg.OriginalTransactionId);
-
+						// can be looped back from offline
+						if (!_cancellationTransactions.ContainsKey(cancelMsg.TransactionId))
+							_cancellationTransactions.Add(cancelMsg.TransactionId, cancelMsg.OriginalTransactionId);
+					}
+					
 					break;
 				}
 				case MessageTypes.MarketData:
@@ -116,7 +162,7 @@ namespace StockSharp.Algo.Storages
 			if (message is null)
 				throw new ArgumentNullException(nameof(message));
 
-			Buffer.ProcessMessage(message);
+			Buffer.ProcessInMessage(message);
 
 			if (message.IsSubscribe && message.From == null && message.To == null && Settings.IsMode(StorageModes.Snapshot))
 			{
@@ -183,9 +229,9 @@ namespace StockSharp.Algo.Storages
 			if (!message.IsSubscribe)
 				return message;
 
-			_orderStatusIds.Add(message.TransactionId);
-
 			var transId = message.TransactionId;
+
+			_orderStatusIds.Add(transId);
 
 			if (!message.HasOrderId() && message.OriginalTransactionId == 0 && Settings.DaysLoad > TimeSpan.Zero)
 			{
@@ -194,14 +240,23 @@ namespace StockSharp.Algo.Storages
 
 				if (Settings.IsMode(StorageModes.Snapshot))
 				{
+					var states = message.States.ToHashSet();
+
+					var ordersIds = new HashSet<long>();
+					
 					var storage = (ISnapshotStorage<string, ExecutionMessage>)GetSnapshotStorage(DataType.Transactions);
 
 					foreach (var snapshot in storage.GetAll(from, to))
 					{
-						if (snapshot.OrderId != null)
-							_orderIds.TryAdd(snapshot.OrderId.Value, snapshot.TransactionId);
-						else if (!snapshot.OrderStringId.IsEmpty())
-							_orderStringIds.TryAdd(snapshot.OrderStringId, snapshot.TransactionId);
+						if (snapshot.HasOrderInfo)
+						{
+							if (!snapshot.IsMatch(message, states))
+								continue;
+
+							ordersIds.Add(snapshot.TransactionId);
+						}
+						else if (!ordersIds.Contains(snapshot.TransactionId))
+							continue;
 
 						snapshot.OriginalTransactionId = transId;
 						snapshot.SetSubscriptionIds(subscriptionId: transId);
@@ -234,7 +289,7 @@ namespace StockSharp.Algo.Storages
 		/// <inheritdoc />
 		protected override void OnInnerAdapterNewOutMessage(Message message)
 		{
-			Buffer.ProcessMessage(message);
+			Buffer.ProcessOutMessage(message);
 
 			base.OnInnerAdapterNewOutMessage(message);
 		}
@@ -251,9 +306,6 @@ namespace StockSharp.Algo.Storages
 
 			var isProcessing = false;
 			var sync = new SyncObject();
-
-			var unkByOrderId = new Dictionary<long, List<ExecutionMessage>>();
-			var unkByOrderStringId = new Dictionary<string, List<ExecutionMessage>>(StringComparer.InvariantCultureIgnoreCase);
 
 			_timer = ThreadingHelper.Timer(() =>
 			{
@@ -286,6 +338,10 @@ namespace StockSharp.Algo.Storages
 					{
 						var secId = pair.Key;
 
+						// failed order's response doesn't contain sec id
+						if (secId == default)
+							continue;
+
 						if (incremental)
 							Settings.GetStorage<ExecutionMessage>(secId, ExecutionTypes.Transaction).Save(pair.Value);
 
@@ -296,68 +352,44 @@ namespace StockSharp.Algo.Storages
 							foreach (var message in pair.Value)
 							{
 								// do not store cancellation commands into snapshot
-								if (message.IsCancellation/* && message.TransactionId != 0*/)
+								if (message.IsCancellation)
 								{
+									this.AddWarningLog("Cancellation transaction: {0}", message);
 									continue;
 								}
 
 								var originTransId = message.OriginalTransactionId;
 
-								if (message.TransactionId == 0 && originTransId == 0)
+								if (originTransId == 0)
+									continue;
+
+								if (_cancellationTransactions.TryGetValue(originTransId, out var cancelledId))
 								{
-									if (!message.HasTradeInfo)
+									// do not store cancellation errors
+									if (message.Error != null)
 										continue;
 
-									long transId;
-
-									if (message.OrderId != null)
-									{
-										if (!_orderIds.TryGetValue(message.OrderId.Value, out transId))
-										{
-											unkByOrderId.SafeAdd(message.OrderId.Value).Add(message);
-											continue;
-										}
-									}
-									else if (!message.OrderStringId.IsEmpty())
-									{
-										if (!_orderStringIds.TryGetValue(message.OrderStringId, out transId))
-										{
-											unkByOrderStringId.SafeAdd(message.OrderStringId).Add(message);
-											continue;
-										}
-									}
-									else
-										continue;
-
-									originTransId = transId;
+									// override cancel trans id by original order's registration trans id
+									originTransId = cancelledId;
 								}
-								else
+								else if (_orderStatusIds.Contains(originTransId))
 								{
-									if (originTransId != 0)
+									// override status request trans id by original order's registration trans id
+									originTransId = message.TransactionId;
+								}
+								else if (_replaceTransactions.TryGetAndRemove(originTransId, out var replacedId))
+								{
+									if (message.Error == null)
 									{
-										if (/*message.TransactionId == 0 && */_cancellationTransactions.TryGetValue(originTransId, out var temp))
+										var replaced = (ExecutionMessage)snapshotStorage.Get(replacedId.To<string>());
+
+										if (replaced == null)
+											this.AddWarningLog("Replaced order {0} not found.", replacedId);
+										else
 										{
-											// do not store cancellation errors
-											if (message.Error != null)
-												continue;
-
-											// override cancel trans id by original order's registration trans id
-											originTransId = temp;
+											if (replaced.OrderState != OrderStates.Done)
+												replaced.OrderState = OrderStates.Done;
 										}
-
-										if (_orderStatusIds.Contains(originTransId))
-										{
-											// override status request trans id by original order's registration trans id
-											originTransId = message.TransactionId;
-										}
-									}
-
-									if (originTransId != 0)
-									{
-										if (message.OrderId != null)
-											_orderIds.TryAdd(message.OrderId.Value, originTransId);
-										else if (message.OrderStringId != null)
-											_orderStringIds.TryAdd(message.OrderStringId, originTransId);
 									}
 								}
 
@@ -369,33 +401,6 @@ namespace StockSharp.Algo.Storages
 								message.OriginalTransactionId = 0;
 
 								SaveTransaction(snapshotStorage, message);
-
-								if (message.OrderId != null)
-								{
-									if (unkByOrderId.TryGetValue(message.OrderId.Value, out var suspended))
-									{
-										unkByOrderId.Remove(message.OrderId.Value);
-
-										foreach (var trade in suspended)
-										{
-											trade.TransactionId = message.TransactionId;
-											SaveTransaction(snapshotStorage, trade);
-										}
-									}
-								}
-								else if (!message.OrderStringId.IsEmpty())
-								{
-									if (unkByOrderStringId.TryGetValue(message.OrderStringId, out var suspended))
-									{
-										unkByOrderStringId.Remove(message.OrderStringId);
-
-										foreach (var trade in suspended)
-										{
-											trade.TransactionId = message.TransactionId;
-											SaveTransaction(snapshotStorage, trade);
-										}
-									}
-								}
 							}
 						}
 					}
@@ -456,6 +461,13 @@ namespace StockSharp.Algo.Storages
 					if (news.Length > 0)
 					{
 						Settings.GetStorage<NewsMessage>(default, null).Save(news);
+					}
+
+					var boardStates = Buffer.GetBoardStates().ToArray();
+
+					if (boardStates.Length > 0)
+					{
+						Settings.GetStorage<BoardStateMessage>(default, null).Save(boardStates);
 					}
 				}
 				catch (Exception excp)

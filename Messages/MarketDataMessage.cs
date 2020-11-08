@@ -157,7 +157,7 @@ namespace StockSharp.Messages
 	/// </summary>
 	[DataContract]
 	[Serializable]
-	public class MarketDataMessage : SecurityMessage, ISubscriptionMessage
+	public class MarketDataMessage : SecurityMessage, ISubscriptionMessage, IGeneratedMessage
 	{
 		/// <inheritdoc />
 		[DataMember]
@@ -197,7 +197,7 @@ namespace StockSharp.Messages
 		{
 #pragma warning disable CS0618 // Type or member is obsolete
 #pragma warning disable CS0612 // Type or member is obsolete
-			get => DataType2.ToMarketDataType().Value;
+			get => DataType2.ToMarketDataType();
 			set => DataType2 = value.ToDataType(Arg);
 #pragma warning restore CS0612 // Type or member is obsolete
 #pragma warning restore CS0618 // Type or member is obsolete
@@ -214,7 +214,7 @@ namespace StockSharp.Messages
 		public object Arg
 		{
 			get => DataType2.Arg;
-			set => DataType2.Arg = value;
+			set => DataType2 = Messages.DataType.Create(DataType2.MessageType, value);
 		}
 
 		/// <inheritdoc />
@@ -225,9 +225,11 @@ namespace StockSharp.Messages
 		[DataMember]
 		public long TransactionId { get; set; }
 
-		/// <summary>
-		/// Market-data count.
-		/// </summary>
+		/// <inheritdoc />
+		[DataMember]
+		public long? Skip { get; set; }
+
+		/// <inheritdoc />
 		[DataMember]
 		public long? Count { get; set; }
 
@@ -255,9 +257,7 @@ namespace StockSharp.Messages
 		[DataMember]
 		public MarketDataBuildModes BuildMode { get; set; }
 
-		/// <summary>
-		/// Which market-data type is used as a source value.
-		/// </summary>
+		/// <inheritdoc />
 		[DataMember]
 		public DataType BuildFrom { get; set; }
 
@@ -286,7 +286,7 @@ namespace StockSharp.Messages
 		/// Request <see cref="CandleStates.Finished"/> only candles.
 		/// </summary>
 		[DataMember]
-		public bool IsFinished { get; set; }
+		public bool IsFinishedOnly { get; set; }
 
 		/// <summary>
 		/// Board code.
@@ -310,6 +310,14 @@ namespace StockSharp.Messages
 		/// </summary>
 		[DataMember]
 		public bool FillGaps { get; set; }
+
+		/// <summary>
+		/// Pass through incremental <see cref="QuoteChangeMessage"/>.
+		/// </summary>
+		[DataMember]
+		public bool DoNotBuildOrderBookInrement { get; set; }
+
+		bool ISubscriptionMessage.FilterEnabled => false;
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MarketDataMessage"/>.
@@ -352,6 +360,7 @@ namespace StockSharp.Messages
 			destination.To = To;
 			destination.IsSubscribe = IsSubscribe;
 			destination.TransactionId = TransactionId;
+			destination.Skip = Skip;
 			destination.Count = Count;
 			destination.MaxDepth = MaxDepth;
 			destination.NewsId = NewsId;
@@ -361,11 +370,12 @@ namespace StockSharp.Messages
 			destination.IsCalcVolumeProfile = IsCalcVolumeProfile;
 			destination.AllowBuildFromSmallerTimeFrame = AllowBuildFromSmallerTimeFrame;
 			destination.IsRegularTradingHours = IsRegularTradingHours;
-			destination.IsFinished = IsFinished;
+			destination.IsFinishedOnly = IsFinishedOnly;
 			destination.BoardCode = BoardCode;
 			destination.RefreshSpeed = RefreshSpeed;
 			destination.DepthBuilder = DepthBuilder;
 			destination.FillGaps = FillGaps;
+			destination.DoNotBuildOrderBookInrement = DoNotBuildOrderBookInrement;
 		}
 
 		/// <inheritdoc />
@@ -379,16 +389,19 @@ namespace StockSharp.Messages
 			if (OriginalTransactionId != default)
 				str += $",OrigId={OriginalTransactionId}";
 
-			if (MaxDepth != null)
+			if (MaxDepth != default)
 				str += $",MaxDepth={MaxDepth}";
 
-			if (Count != null)
+			if (Skip != default)
+				str += $",Skip={Skip}";
+
+			if (Count != default)
 				str += $",Cnt={Count}";
 
-			if (From != null)
+			if (From != default)
 				str += $",From={From}";
 
-			if (To != null)
+			if (To != default)
 				str += $",To={To}";
 
 			if (BuildMode == MarketDataBuildModes.Build)
@@ -400,8 +413,8 @@ namespace StockSharp.Messages
 			if (IsRegularTradingHours)
 				str += $",RTH={IsRegularTradingHours}";
 
-			if (IsFinished)
-				str += $",Fin={IsFinished}";
+			if (IsFinishedOnly)
+				str += $",FinOnly={IsFinishedOnly}";
 
 			if (IsCalcVolumeProfile)
 				str += $",Profile={IsCalcVolumeProfile}";
@@ -414,6 +427,9 @@ namespace StockSharp.Messages
 
 			if (FillGaps)
 				str += $",Gaps={FillGaps}";
+
+			if (DoNotBuildOrderBookInrement)
+				str += $",NotBuildInc={DoNotBuildOrderBookInrement}";
 
 			return str;
 		}

@@ -55,7 +55,7 @@ namespace SampleStrategies
 			if (connector != null)
 			{
 				if (_initialized)
-					connector.MarketDepthChanged -= TraderOnMarketDepthChanged;
+					connector.MarketDepthReceived -= TraderOnMarketDepthReceived;
 			}
 
 			base.OnClosed(e);
@@ -104,15 +104,20 @@ namespace SampleStrategies
 				else
 				{
 					window.Show();
-					window.DepthCtrl.UpdateDepth(connector.GetMarketDepth(security));
+					//window.DepthCtrl.UpdateDepth(connector.GetMarketDepth(security));
 				}
 
 				if (!_initialized)
 				{
-					connector.MarketDepthChanged += TraderOnMarketDepthChanged;
+					connector.MarketDepthReceived += TraderOnMarketDepthReceived;
 					_initialized = true;
 				}
 			}
+		}
+
+		private Subscription FindSubscription(Security security, DataType dataType)
+		{
+			return Connector.FindSubscriptions(security, dataType).Where(s => s.SubscriptionMessage.To == null && s.State.IsActive()).FirstOrDefault();
 		}
 
 		private void QuotesClick(object sender, RoutedEventArgs e)
@@ -121,14 +126,16 @@ namespace SampleStrategies
 
 			foreach (var security in SecurityPicker.SelectedSecurities)
 			{
-				if (connector.RegisteredSecurities.Contains(security))
-					connector.UnSubscribeLevel1(security);
+				var subscription = FindSubscription(security, DataType.Level1);
+
+				if (subscription != null)
+					connector.UnSubscribe(subscription);
 				else
 					connector.SubscribeLevel1(security);
 			}
 		}
 
-		private void TraderOnMarketDepthChanged(MarketDepth depth)
+		private void TraderOnMarketDepthReceived(Subscription subscription, MarketDepth depth)
 		{
 			var wnd = _quotesWindows.TryGetValue(depth.Security);
 
@@ -155,7 +162,7 @@ namespace SampleStrategies
 
 		public void ProcessOrder(Order order)
 		{
-			_quotesWindows.TryGetValue(order.Security)?.DepthCtrl.ProcessOrder(order, order.Balance, order.State);
+			_quotesWindows.TryGetValue(order.Security)?.DepthCtrl.ProcessOrder(order, order.Price, order.Balance, order.State);
 		}
 	}
 }

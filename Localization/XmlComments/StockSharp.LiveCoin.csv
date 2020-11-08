@@ -6,10 +6,11 @@ P:StockSharp.LiveCoin.LiveCoinMessageAdapter.SupportedOrderBookDepths/inheritdoc
 M:StockSharp.LiveCoin.LiveCoinMessageAdapter.GetTimeFrames(StockSharp.Messages.SecurityId,System.Nullable{System.DateTimeOffset},System.Nullable{System.DateTimeOffset})/inheritdoc;DocStr8459
 P:StockSharp.LiveCoin.LiveCoinMessageAdapter.IsSupportOrderBookIncrements/inheritdoc;DocStr8459
 M:StockSharp.LiveCoin.LiveCoinMessageAdapter.GetHistoryStepSize(StockSharp.Messages.DataType,System.TimeSpan@)/inheritdoc;DocStr8459
+P:StockSharp.LiveCoin.LiveCoinMessageAdapter.FeatureName/inheritdoc;DocStr8459
 M:StockSharp.LiveCoin.LiveCoinMessageAdapter.OnSendInMessage(StockSharp.Messages.Message)/inheritdoc;DocStr8459
 P:StockSharp.LiveCoin.LiveCoinMessageAdapter.AllTimeFrames/summary;DocStr206
-P:StockSharp.LiveCoin.LiveCoinMessageAdapter.Key/summary;Str3304
-P:StockSharp.LiveCoin.LiveCoinMessageAdapter.Secret/summary;DocStr3146
+P:StockSharp.LiveCoin.LiveCoinMessageAdapter.Key/inheritdoc;DocStr8459
+P:StockSharp.LiveCoin.LiveCoinMessageAdapter.Secret/inheritdoc;DocStr8459
 M:StockSharp.LiveCoin.LiveCoinMessageAdapter.Save(Ecng.Serialization.SettingsStorage)/inheritdoc;DocStr8459
 M:StockSharp.LiveCoin.LiveCoinMessageAdapter.Load(Ecng.Serialization.SettingsStorage)/inheritdoc;DocStr8459
 M:StockSharp.LiveCoin.LiveCoinMessageAdapter.ToString/inheritdoc;DocStr8459

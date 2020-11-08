@@ -9,6 +9,7 @@
 	using Ecng.Configuration;
 	using Ecng.Serialization;
 	using Ecng.Xaml;
+	using Ecng.Collections;
 
 	using StockSharp.Algo;
 	using StockSharp.Algo.Storages;
@@ -123,21 +124,26 @@
 			Connector.MarketDataSubscriptionFailed += (security, msg, error) =>
 				this.GuiAsync(() => MessageBox.Show(this.GetWindow(), error.ToString(), LocalizedStrings.Str2956Params.Put(msg.DataType2, security)));
 
-			Connector.NewSecurity += _securitiesWindow.SecurityPicker.Securities.Add;
+			Connector.SecurityReceived += (s, sec) => _securitiesWindow.SecurityPicker.Securities.Add(sec);
 			Connector.TickTradeReceived += (s, t) => _tradesWindow.TradeGrid.Trades.Add(t);
 			Connector.OrderLogItemReceived += (s, ol) => _orderLogWindow.OrderLogGrid.LogItems.Add(ol);
 			Connector.Level1Received += (s, l) => _level1Window.Level1Grid.Messages.Add(l);
 
-			Connector.NewOrder += _ordersWindow.OrderGrid.Orders.Add;
+			Connector.NewOrder += Connector_OnNewOrder;
+			Connector.OrderChanged += Connector_OnOrderChanged;
+			Connector.OrderEdited += Connector_OnOrderEdited;
+
 			Connector.NewMyTrade += _myTradesWindow.TradeGrid.Trades.Add;
 
-			Connector.NewPortfolio += _portfoliosWindow.PortfolioGrid.Positions.Add;
-			Connector.NewPosition += _portfoliosWindow.PortfolioGrid.Positions.Add;
+			Connector.PortfolioReceived += (sub, p) => _portfoliosWindow.PortfolioGrid.Positions.TryAdd(p);
+			Connector.PositionReceived += (sub, p) => _portfoliosWindow.PortfolioGrid.Positions.TryAdd(p);
 
 			// subscribe on error of order registration event
-			Connector.OrderRegisterFailed += _ordersWindow.OrderGrid.AddRegistrationFail;
+			Connector.OrderRegisterFailed += Connector_OnOrderRegisterFailed;
 			// subscribe on error of order cancelling event
-			Connector.OrderCancelFailed += OrderFailed;
+			Connector.OrderCancelFailed += Connector_OnOrderCancelFailed;
+			// subscribe on error of order edition event
+			Connector.OrderEditFailed += Connector_OnOrderEditFailed;
 
 			// set market data provider
 			_securitiesWindow.SecurityPicker.MarketDataProvider = Connector;
@@ -169,14 +175,8 @@
 
 			if (Connector.StorageAdapter != null)
 			{
-				try
-				{
-					Connector.EntityRegistry.Init();
-				}
-				catch (Exception ex)
-				{
-					MessageBox.Show(this.GetWindow(), ex.ToString());
-				}
+				LoggingHelper.DoWithLog(ServicesRegistry.EntityRegistry.Init);
+				LoggingHelper.DoWithLog(ServicesRegistry.ExchangeInfoProvider.Init);
 
 				Connector.Adapter.StorageSettings.DaysLoad = TimeSpan.FromDays(3);
 				Connector.Adapter.StorageSettings.Mode = StorageModes.Snapshot;
@@ -185,7 +185,6 @@
 				Connector.SnapshotRegistry.Init();
 			}
 
-			ConfigManager.RegisterService<IExchangeInfoProvider>(new InMemoryExchangeInfoProvider());
 			ConfigManager.RegisterService<IMessageAdapterProvider>(new FullInMemoryMessageAdapterProvider(Connector.Adapter.InnerAdapters));
 
 			try
@@ -204,6 +203,43 @@
 			}
 		}
 
+		private void Connector_OnNewOrder(Order order)
+		{
+			_ordersWindow.OrderGrid.Orders.Add(order);
+			_securitiesWindow.ProcessOrder(order);
+		}
+
+		private void Connector_OnOrderChanged(Order order)
+		{
+			_securitiesWindow.ProcessOrder(order);
+		}
+
+		private void Connector_OnOrderEdited(long transactionId, Order order)
+		{
+			_securitiesWindow.ProcessOrder(order);
+		}
+
+		private void Connector_OnOrderRegisterFailed(OrderFail fail)
+		{
+			_ordersWindow.OrderGrid.AddRegistrationFail(fail);
+			_securitiesWindow.ProcessOrderFail(fail);
+		}
+
+		private void Connector_OnOrderEditFailed(long transactionId, OrderFail fail)
+		{
+			_securitiesWindow.ProcessOrderFail(fail);
+		}
+
+		private void Connector_OnOrderCancelFailed(OrderFail fail)
+		{
+			_securitiesWindow.ProcessOrderFail(fail);
+
+			this.GuiAsync(() =>
+			{
+				MessageBox.Show(this.GetWindow(), fail.Error.ToString(), LocalizedStrings.Str153);
+			});
+		}
+
 		private void SettingsClick(object sender, RoutedEventArgs e)
 		{
 			if (Connector.Configure(this.GetWindow()))
@@ -220,14 +256,6 @@
 			{
 				Connector.Disconnect();
 			}
-		}
-
-		private void OrderFailed(OrderFail fail)
-		{
-			this.GuiAsync(() =>
-			{
-				MessageBox.Show(this.GetWindow(), fail.Error.ToString(), LocalizedStrings.Str153);
-			});
 		}
 
 		private void ChangeConnectStatus(bool isConnected)

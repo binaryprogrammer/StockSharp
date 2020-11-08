@@ -22,7 +22,7 @@ namespace StockSharp.Algo
 	/// <summary>
 	/// The quote with the time mark. It used for CSV files.
 	/// </summary>
-	public class TimeQuoteChange : QuoteChange
+	public class TimeQuoteChange : IServerTimeMessage
 	{
 		/// <summary>
 		/// Initializes a new instance of the <see cref="TimeQuoteChange"/>.
@@ -39,19 +39,20 @@ namespace StockSharp.Algo
 		/// <param name="message">The message with quotes.</param>
 		public TimeQuoteChange(Sides side, QuoteChange quote, QuoteChangeMessage message)
 		{
-			if (quote == null)
-				throw new ArgumentNullException(nameof(quote));
-
-			if (message == null)
+			if (message is null)
 				throw new ArgumentNullException(nameof(message));
 
 			SecurityId = message.SecurityId;
 			ServerTime = message.ServerTime;
 			LocalTime = message.LocalTime;
-			Price = quote.Price;
-			Volume = quote.Volume;
+			Quote = quote;
 			Side = side;
 		}
+
+		/// <summary>
+		/// Market depth quote representing bid or ask.
+		/// </summary>
+		public QuoteChange Quote { get; set; }
 
 		/// <summary>
 		/// Direction (buy or sell).
@@ -72,5 +73,10 @@ namespace StockSharp.Algo
 		/// The local time mark.
 		/// </summary>
 		public DateTimeOffset LocalTime { get; set; }
+
+		MessageTypes IMessage.Type => throw new NotSupportedException();
+		IMessageAdapter IMessage.Adapter { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+		MessageBackModes IMessage.BackMode { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+		object ICloneable.Clone() => throw new NotSupportedException();
 	}
 }

@@ -27,6 +27,8 @@ namespace StockSharp.Algo.Storages.Csv
 		{
 		}
 
+		private static readonly string[] _reserved = new string[10];
+
 		/// <inheritdoc />
 		protected override void Write(CsvFileWriter writer, PositionChangeMessage data, IMarketDataMetaInfo metaInfo)
 		{
@@ -39,12 +41,21 @@ namespace StockSharp.Algo.Storages.Csv
 				data.PortfolioName,
 				data.ClientCode,
 				data.DepoName,
-				data.LimitType.To<string>(),
+				data.LimitType.To<int?>().ToString(),
+				data.Description,
+				data.StrategyId,
+				data.Side.To<int?>().ToString(),
 			});
+
+			row.AddRange(data.BuildFrom.ToCsv());
+
+			row.AddRange(_reserved);
+
+			row.Add(_types.Length.To<string>());
 
 			foreach (var type in _types)
 			{
-				var value = data.Changes.TryGetValue(type);
+				var value = data.TryGet(type);
 
 				if (type == PositionChangeTypes.ExpirationDate)
 				{
@@ -70,10 +81,18 @@ namespace StockSharp.Algo.Storages.Csv
 				PortfolioName = reader.ReadString(),
 				ClientCode = reader.ReadString(),
 				DepoName = reader.ReadString(),
-				LimitType = reader.ReadString().To<TPlusLimits?>(),
+				LimitType = reader.ReadNullableEnum<TPlusLimits>(),
+				Description = reader.ReadString(),
+				StrategyId = reader.ReadString(),
+				Side = reader.ReadNullableEnum<Sides>(),
+				BuildFrom = reader.ReadBuildFrom(),
 			};
 
-			foreach (var type in _types)
+			reader.Skip(_reserved.Length);
+
+			var count = reader.ReadInt();
+
+			foreach (var type in _types.Take(count))
 			{
 				switch (type)
 				{
